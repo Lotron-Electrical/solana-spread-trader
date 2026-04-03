@@ -1680,15 +1680,25 @@ const CinemaChart = {
             ctx.fillText('A$' + val.toFixed(2), w - pad.right + 8, y + 4);
         }
 
-        /* Time labels */
+        /* Time labels — show date + time so multi-day projections make sense */
         ctx.fillStyle = '#555568';
         ctx.font = '11px JetBrains Mono, monospace';
         ctx.textAlign = 'center';
+        const firstTs = CinemaChart.data[0].timestamp;
+        const lastTs = CinemaChart.data[CinemaChart.data.length - 1].timestamp;
+        const spanHours = (lastTs - firstTs) / (3600 * 1000);
         for (let i = 0; i <= 6; i++) {
             const idx = Math.floor((i / 6) * (CinemaChart.data.length - 1));
             const x = toX(idx);
             const d = new Date(CinemaChart.data[idx].timestamp);
-            ctx.fillText(d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' }), x, h - 12);
+            let label;
+            if (spanHours > 24) {
+                label = d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) + ' ' +
+                        d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' });
+            } else {
+                label = d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' });
+            }
+            ctx.fillText(label, x, h - 12);
         }
 
         /* Area gradient */
@@ -1925,9 +1935,10 @@ function cinemaStep() {
 
     Engine.updatePnl();
 
-    /* Update cinema chart */
+    /* Update cinema chart — sliding window of 120 points so the chart
+       scrolls smoothly instead of compressing as data accumulates */
     const chartData = CinemaChart.data.concat({ timestamp: candle.timestamp, price: candle.close });
-    if (chartData.length > 500) chartData.splice(0, chartData.length - 500);
+    if (chartData.length > 120) chartData.splice(0, chartData.length - 120);
     CinemaChart.setData(chartData);
 
     /* Update cinema HUD */
