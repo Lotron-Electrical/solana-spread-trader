@@ -57,6 +57,14 @@ const state = {
     /* Simulation */
     simRunning: false,
 
+    /* Projection / Watch */
+    watchRunning: false,
+    watchPaused: false,
+    watchTimer: null,
+    watchCandles: [],
+    watchIndex: 0,
+    watchSavedState: null,  /* Snapshot to restore after watch ends */
+
     /* Engine */
     engineType: 'JavaScript',
     priceInterval: null,
@@ -798,6 +806,9 @@ const UI = {
             'sim-return-pct', 'sim-total-trades', 'sim-win-rate',
             'sim-sharpe', 'sim-max-dd', 'sim-avg-pnl', 'sim-best-trade',
             'sim-worst-trade', 'live-warning',
+            'proj-duration', 'proj-speed', 'btn-watch-sim',
+            'playback-controls', 'btn-playback-pause', 'btn-playback-stop',
+            'playback-fill', 'playback-counter',
             'status-mode', 'status-engine', 'status-api', 'status-ws', 'status-time',
         ];
         for (const id of ids) {
@@ -1251,6 +1262,25 @@ async function main() {
         UI.els['btn-run-sim'].addEventListener('click', runSimulation);
     }
 
+    /* Watch projection */
+    if (UI.els['btn-watch-sim']) {
+        UI.els['btn-watch-sim'].addEventListener('click', startWatch);
+    }
+    if (UI.els['btn-playback-pause']) {
+        UI.els['btn-playback-pause'].addEventListener('click', () => {
+            state.watchPaused = !state.watchPaused;
+            const icon = document.getElementById('pause-icon');
+            if (icon) {
+                icon.innerHTML = state.watchPaused
+                    ? '<path d="M3 1l10 6-10 6V1z"/>'
+                    : '<rect x="2" y="1" width="4" height="12"/><rect x="8" y="1" width="4" height="12"/>';
+            }
+        });
+    }
+    if (UI.els['btn-playback-stop']) {
+        UI.els['btn-playback-stop'].addEventListener('click', stopWatch);
+    }
+
     /* ── Start price feed ── */
     await updatePrice();
     await loadChartData();
@@ -1451,6 +1481,380 @@ async function runSimulation() {
     UI.els['btn-run-sim'].disabled = false;
     state.simRunning = false;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   PROJECTION — Future price prediction + animated playback
+   Uses geometric Brownian motion calibrated from recent volatility.
+   ═══════════════════════════════════════════════════════════════ */
+
+const Projection = {
+    /**
+     * Generate projected future candles using GBM.
+     * @param {number} currentPrice - Current SOL/AUD price
+     * @param {Array} recentPrices - Recent price points [{timestamp, price}]
+     * @param {number} durationHours - How far to project
+     * @returns {Array} Array of projected candles
+     */
+    generateCandles(currentPrice, recentPrices, durationHours) {
+        /* Calculate drift and volatility from recent data */
+        const returns = [];
+        for (let i = 1; i < recentPrices.length; i++) {
+            const dt = (recentPrices[i].timestamp - recentPrices[i - 1].timestamp) / (3600 * 1000);
+            if (dt > 0 && recentPrices[i - 1].price > 0) {
+                returns.push(Math.log(recentPrices[i].price / recentPrices[i - 1].price) / Math.sqrt(dt));
+            }
+        }
+
+        /* Annualized drift and volatility (fallback to reasonable defaults) */
+        let mu = 0;
+        let sigma = 0.02; /* ~2% per sqrt(hour) default */
+        if (returns.length >= 5) {
+            mu = returns.reduce((a, b) => a + b, 0) / returns.length;
+            const variance = returns.reduce((s, r) => s + (r - mu) ** 2, 0) / (returns.length - 1);
+            sigma = Math.sqrt(variance);
+            if (sigma < 0.001) sigma = 0.001; /* Floor to prevent flat projections */
+        }
+
+        /* Generate candles at 15-minute intervals */
+        const intervalHours = 0.25;
+        const numCandles = Math.ceil(durationHours / intervalHours);
+        const candles = [];
+        let price = currentPrice;
+        const now = Date.now();
+
+        for (let i = 0; i < numCandles; i++) {
+            const dt = intervalHours;
+            /* GBM step: dS = S * (mu*dt + sigma*sqrt(dt)*Z) */
+            const z = Projection.normalRandom();
+            const drift = mu * dt;
+            const diffusion = sigma * Math.sqrt(dt) * z;
+            const newPrice = price * Math.exp(drift + diffusion);
+
+            /* Generate OHLC from the step */
+            const intraVol = sigma * Math.sqrt(dt) * 0.5;
+            const high = Math.max(price, newPrice) * (1 + Math.abs(Projection.normalRandom()) * intraVol);
+            const low = Math.min(price, newPrice) * (1 - Math.abs(Projection.normalRandom()) * intraVol);
+
+            candles.push({
+                timestamp: now + (i + 1) * intervalHours * 3600 * 1000,
+                open: price,
+                high: Math.max(high, price, newPrice),
+                low: Math.min(low, price, newPrice),
+                close: newPrice,
+                volume: 0,
+                projected: true,
+            });
+            price = newPrice;
+        }
+        return candles;
+    },
+
+    /* Box-Muller transform for standard normal random */
+    normalRandom() {
+        let u = 0, v = 0;
+        while (u === 0) u = Math.random();
+        while (v === 0) v = Math.random();
+        return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+    },
+};
+
+
+/* ═══════════════════════════════════════════════════════════════
+   WATCH — Animated playback of projected trades
+   ═══════════════════════════════════════════════════════════════ */
+
+async function startWatch() {
+    if (state.watchRunning || state.simRunning) return;
+
+    const durationHours = parseInt(UI.els['proj-duration']?.value) || 12;
+    const speedMs = parseInt(UI.els['proj-speed']?.value) || 100;
+    const threshold = parseFloat(UI.els['sim-threshold']?.value) || state.threshold;
+    const tradePct = parseFloat(UI.els['sim-trade-pct']?.value) || 10;
+    const initialAud = parseFloat(UI.els['sim-initial']?.value) || 10000;
+
+    if (state.currentPrice <= 0) {
+        UI.showNotification('Waiting for live price data before projecting...', 'error');
+        return;
+    }
+
+    /* Need recent price data for volatility calibration */
+    UI.showNotification('Fetching recent data for volatility calibration...', 'info');
+    const recentData = await API.fetchChartData(1); /* Last 24h */
+    if (!recentData || recentData.length < 10) {
+        UI.showNotification('Not enough recent data to calibrate. Try again in a moment.', 'error');
+        return;
+    }
+
+    /* Generate projected candles */
+    const candles = Projection.generateCandles(state.currentPrice, recentData, durationHours);
+    if (!candles.length) {
+        UI.showNotification('Failed to generate projection', 'error');
+        return;
+    }
+
+    /* Save current state to restore later */
+    state.watchSavedState = {
+        balanceAud: state.balanceAud,
+        balanceSol: state.balanceSol,
+        initialAud: state.initialAud,
+        totalPnl: state.totalPnl,
+        totalPnlPct: state.totalPnlPct,
+        peakBalance: state.peakBalance,
+        maxDrawdown: state.maxDrawdown,
+        winRate: state.winRate,
+        totalTrades: state.totalTrades,
+        winningTrades: state.winningTrades,
+        losingTrades: state.losingTrades,
+        trades: [...state.trades],
+        currentPrice: state.currentPrice,
+        bidPrice: state.bidPrice,
+        askPrice: state.askPrice,
+        spread: state.spread,
+        spreadPct: state.spreadPct,
+        costBasis: { ...Engine._costBasis },
+    };
+
+    /* Reset state for projection */
+    state.balanceAud = initialAud;
+    state.balanceSol = 0;
+    state.initialAud = initialAud;
+    state.totalPnl = 0;
+    state.totalPnlPct = 0;
+    state.peakBalance = initialAud;
+    state.maxDrawdown = 0;
+    state.winRate = 0;
+    state.totalTrades = 0;
+    state.winningTrades = 0;
+    state.losingTrades = 0;
+    state.trades = [];
+    state.threshold = threshold;
+    Engine.resetCostBasis();
+
+    /* Prepare UI */
+    state.watchRunning = true;
+    state.watchPaused = false;
+    state.watchCandles = candles;
+    state.watchIndex = 0;
+
+    UI.clearTrades();
+    UI.updatePortfolio();
+
+    /* Pause the live price feed during watch */
+    if (state.priceInterval) {
+        clearInterval(state.priceInterval);
+        state.priceInterval = null;
+    }
+
+    /* Show playback controls */
+    const controls = UI.els['playback-controls'];
+    if (controls) controls.classList.remove('hidden');
+    UI.els['btn-watch-sim'].disabled = true;
+    UI.els['btn-run-sim'].disabled = true;
+
+    /* Add watching class for visual feedback */
+    document.querySelector('.spread-card')?.classList.add('watching');
+    document.querySelector('.chart-card')?.classList.add('watching');
+
+    /* Initialize chart with current price + start of projection */
+    const chartSeed = recentData.slice(-20).map(p => ({
+        timestamp: p.timestamp,
+        price: p.price,
+    }));
+    Chart.setData(chartSeed);
+
+    UI.setFeedStatus('Projection');
+    UI.showNotification(`Projecting ${durationHours}h ahead — ${candles.length} candles`, 'info');
+
+    /* Start stepping */
+    watchStep(speedMs, tradePct);
+}
+
+function watchStep(speedMs, tradePct) {
+    if (!state.watchRunning) return;
+    if (state.watchPaused) {
+        state.watchTimer = setTimeout(() => watchStep(speedMs, tradePct), 100);
+        return;
+    }
+
+    if (state.watchIndex >= state.watchCandles.length) {
+        finishWatch();
+        return;
+    }
+
+    const candle = state.watchCandles[state.watchIndex];
+
+    /* Calculate bid/ask from candle */
+    const range = Math.max(candle.high - candle.low, candle.close * 0.001);
+    const halfSpread = range * 0.25;
+    const bid = Math.max(candle.close - halfSpread, candle.close * 0.999);
+    const ask = Math.max(candle.close + halfSpread, candle.close * 1.001);
+
+    /* Update state as if this were a live price */
+    state.currentPrice = candle.close;
+    state.bidPrice = bid;
+    state.askPrice = ask;
+    state.spread = Engine.calculateSpread(bid, ask);
+    state.spreadPct = Engine.calculateSpreadPct(bid, ask);
+
+    /* Check trading signal */
+    const signal = Engine.shouldTrade(state.spreadPct, state.threshold);
+
+    /* Execute trades based on signal */
+    if (signal && state.balanceSol === 0 && state.balanceAud > 0) {
+        const amount = state.balanceAud * (tradePct / 100);
+        const trade = Engine.executeBuy(amount, ask);
+        if (trade) {
+            trade.timestamp = candle.timestamp;
+            UI.addTradeRow(trade);
+            UI.showNotification(
+                `Predicted BUY: ${trade.amountSol.toFixed(4)} SOL at A$${trade.price.toFixed(2)}`,
+                'success'
+            );
+        }
+    } else if (!signal && state.balanceSol > 0) {
+        const trade = Engine.executeSell(state.balanceSol, bid);
+        if (trade) {
+            trade.timestamp = candle.timestamp;
+            UI.addTradeRow(trade);
+            const pnlStr = trade.pnl >= 0 ? '+' : '';
+            UI.showNotification(
+                `Predicted SELL: ${pnlStr}A$${trade.pnl.toFixed(2)} P&L`,
+                trade.pnl >= 0 ? 'success' : 'error'
+            );
+        }
+    }
+
+    Engine.updatePnl();
+
+    /* Update all UI */
+    UI.updatePrices();
+    UI.updatePortfolio();
+
+    /* Build chart progressively */
+    const chartData = Chart.data.concat({ timestamp: candle.timestamp, price: candle.close });
+    /* Keep chart manageable */
+    if (chartData.length > 200) chartData.splice(0, chartData.length - 200);
+    Chart.setData(chartData);
+
+    /* Update playback progress */
+    const total = state.watchCandles.length;
+    const current = state.watchIndex + 1;
+    if (UI.els['playback-fill']) UI.els['playback-fill'].style.width = ((current / total) * 100) + '%';
+    if (UI.els['playback-counter']) UI.els['playback-counter'].textContent = `${current} / ${total}`;
+
+    /* Update time display */
+    const projTime = new Date(candle.timestamp);
+    if (UI.els['status-time']) UI.els['status-time'].textContent = projTime.toLocaleTimeString('en-AU');
+
+    state.watchIndex++;
+    state.watchTimer = setTimeout(() => watchStep(speedMs, tradePct), speedMs);
+}
+
+function finishWatch() {
+    state.watchRunning = false;
+    if (state.watchTimer) clearTimeout(state.watchTimer);
+    state.watchTimer = null;
+
+    /* Close remaining position */
+    if (state.balanceSol > 0 && state.bidPrice > 0) {
+        const trade = Engine.executeSell(state.balanceSol, state.bidPrice);
+        if (trade) {
+            UI.addTradeRow(trade);
+        }
+    }
+    Engine.updatePnl();
+    UI.updatePortfolio();
+
+    /* Show final results */
+    const returnPct = state.initialAud > 0 ? (state.totalPnl / state.initialAud) * 100 : 0;
+    UI.showNotification(
+        `Projection complete: ${state.totalTrades} trades, ${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(2)}% predicted return`,
+        state.totalPnl >= 0 ? 'success' : 'error'
+    );
+
+    /* Update sim results panel with projection outcome */
+    const r = UI.els;
+    if (r['sim-final-balance']) r['sim-final-balance'].textContent = UI.formatAud(state.balanceAud);
+    if (r['sim-total-pnl']) {
+        r['sim-total-pnl'].textContent = UI.formatAud(state.totalPnl);
+        r['sim-total-pnl'].style.color = state.totalPnl >= 0 ? '#00e676' : '#ff4757';
+    }
+    if (r['sim-return-pct']) {
+        r['sim-return-pct'].textContent = (returnPct >= 0 ? '+' : '') + UI.formatPct(returnPct);
+        r['sim-return-pct'].style.color = returnPct >= 0 ? '#00e676' : '#ff4757';
+    }
+    if (r['sim-total-trades']) r['sim-total-trades'].textContent = state.totalTrades;
+    if (r['sim-win-rate']) r['sim-win-rate'].textContent = UI.formatPct(state.winRate);
+    if (r['sim-max-dd']) {
+        r['sim-max-dd'].textContent = UI.formatPct(state.maxDrawdown);
+        r['sim-max-dd'].style.color = '#ff4757';
+    }
+    const resultsEl = UI.els['sim-results'];
+    if (resultsEl) resultsEl.classList.remove('hidden');
+
+    cleanupWatch();
+}
+
+function stopWatch() {
+    state.watchRunning = false;
+    if (state.watchTimer) clearTimeout(state.watchTimer);
+    state.watchTimer = null;
+    restoreState();
+    cleanupWatch();
+    UI.showNotification('Projection stopped', 'info');
+}
+
+function restoreState() {
+    const saved = state.watchSavedState;
+    if (!saved) return;
+
+    state.balanceAud = saved.balanceAud;
+    state.balanceSol = saved.balanceSol;
+    state.initialAud = saved.initialAud;
+    state.totalPnl = saved.totalPnl;
+    state.totalPnlPct = saved.totalPnlPct;
+    state.peakBalance = saved.peakBalance;
+    state.maxDrawdown = saved.maxDrawdown;
+    state.winRate = saved.winRate;
+    state.totalTrades = saved.totalTrades;
+    state.winningTrades = saved.winningTrades;
+    state.losingTrades = saved.losingTrades;
+    state.trades = saved.trades;
+    state.currentPrice = saved.currentPrice;
+    state.bidPrice = saved.bidPrice;
+    state.askPrice = saved.askPrice;
+    state.spread = saved.spread;
+    state.spreadPct = saved.spreadPct;
+    Engine._costBasis = saved.costBasis;
+
+    state.watchSavedState = null;
+
+    /* Restore trade history display */
+    UI.clearTrades();
+    for (const trade of state.trades) UI.addTradeRow(trade);
+    UI.updatePrices();
+    UI.updatePortfolio();
+}
+
+function cleanupWatch() {
+    /* Hide playback controls */
+    const controls = UI.els['playback-controls'];
+    if (controls) controls.classList.add('hidden');
+    UI.els['btn-watch-sim'].disabled = false;
+    UI.els['btn-run-sim'].disabled = false;
+
+    /* Remove watching visual */
+    document.querySelector('.spread-card')?.classList.remove('watching');
+    document.querySelector('.chart-card')?.classList.remove('watching');
+
+    /* Restart live price feed */
+    state.priceInterval = setInterval(async () => {
+        await updatePrice();
+        autoTradeCheck();
+    }, CONFIG.PRICE_POLL_MS);
+    UI.setFeedStatus(`${CONFIG.PRICE_POLL_MS / 1000}s poll`);
+}
+
 
 /* ── Boot ── */
 document.addEventListener('DOMContentLoaded', main);

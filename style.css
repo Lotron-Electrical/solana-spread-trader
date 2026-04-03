@@ -474,6 +474,59 @@ tbody tr:last-child td { border-bottom: none; }
 .status-left, .status-right { display: flex; gap: 1.5rem; }
 .status-item { display: flex; align-items: center; gap: 0.3rem; }
 
+/* ── Watch / Projection ── */
+.sim-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0.5rem 0;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.sim-divider::before, .sim-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+}
+
+.btn-watch {
+    background: linear-gradient(135deg, var(--solana-purple), #7b2ff7);
+    border-color: var(--solana-purple);
+    color: #fff;
+    font-weight: 600;
+}
+.btn-watch:hover { filter: brightness(1.15); background: linear-gradient(135deg, var(--solana-purple), #7b2ff7); border-color: var(--solana-purple); }
+
+.playback-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 0.8rem;
+    background: var(--bg-input);
+    border-radius: var(--radius-sm);
+    margin-top: 0.5rem;
+}
+.playback-progress { flex: 1; }
+.playback-counter {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+/* Playback active state — pulse the spread card border */
+.spread-card.watching {
+    border-color: var(--solana-purple);
+    box-shadow: 0 0 16px rgba(153, 69, 255, 0.15);
+}
+.chart-card.watching {
+    border-color: var(--solana-purple);
+    box-shadow: 0 0 16px rgba(153, 69, 255, 0.15);
+}
+
 /* ── Utilities ── */
 .hidden { display: none !important; }
 

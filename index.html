@@ -240,6 +240,46 @@
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2l10 6-10 6V2z"/></svg>
                         Run Simulation
                     </button>
+
+                    <!-- Projection / Watch Mode -->
+                    <div class="sim-divider"><span>or predict the future</span></div>
+                    <div class="input-group">
+                        <label for="proj-duration">Projection Duration</label>
+                        <select id="proj-duration">
+                            <option value="1">1 Hour</option>
+                            <option value="4">4 Hours</option>
+                            <option value="12" selected>12 Hours</option>
+                            <option value="24">24 Hours</option>
+                            <option value="168">7 Days</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label for="proj-speed">Playback Speed</label>
+                        <select id="proj-speed">
+                            <option value="500">1x (slow)</option>
+                            <option value="250">2x</option>
+                            <option value="100" selected>5x</option>
+                            <option value="50">10x (fast)</option>
+                            <option value="20">50x (blitz)</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-watch btn-block" id="btn-watch-sim">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="3"/><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 1.5a5.5 5.5 0 110 11 5.5 5.5 0 010-11z"/></svg>
+                        Watch Prediction
+                    </button>
+                    <div class="playback-controls hidden" id="playback-controls">
+                        <button class="btn btn-sm btn-ghost" id="btn-playback-pause" title="Pause/Resume">
+                            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" id="pause-icon"><rect x="2" y="1" width="4" height="12"/><rect x="8" y="1" width="4" height="12"/></svg>
+                        </button>
+                        <div class="playback-progress">
+                            <div class="progress-bar"><div class="progress-fill" id="playback-fill"></div></div>
+                        </div>
+                        <span class="playback-counter" id="playback-counter">0 / 0</span>
+                        <button class="btn btn-sm btn-ghost" id="btn-playback-stop" title="Stop">
+                            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><rect x="2" y="2" width="10" height="10" rx="1"/></svg>
+                        </button>
+                    </div>
+
                     <div class="sim-progress hidden" id="sim-progress">
                         <div class="progress-bar"><div class="progress-fill" id="sim-progress-fill"></div></div>
                         <span class="progress-text" id="sim-progress-text">Running...</span>
