@@ -1555,18 +1555,15 @@ const Projection = {
             if (baseSigma < 0.005) baseSigma = 0.005;
         }
 
-        /* Realistic crypto price model:
-         *  - Tiny positive drift (barely noticeable per candle)
-         *  - High volatility with real two-way movement
-         *  - Occasional sharp crashes that wipe out many candles of gains
-         *  - Extended bleed-outs (multi-candle downtrends)
-         *  - Net slightly positive over long periods */
-        const mu = 0.001;               /* Barely positive drift */
-        const sigma = Math.max(baseSigma * 2.5, 0.025); /* Real crypto vol */
-        const crashProb = 0.04;         /* 4% chance of sharp crash */
-        const crashMin = 4;             /* Crash is 4-12x normal vol */
-        const crashMax = 12;
-        const bleedProb = 0.08;         /* 8% chance of sustained downturn */
+        /* Price model: net positive with real drama.
+         *  Drift strong enough to overcome crash/bleed drag.
+         *  Crashes are scary but recoverable. Bleeds are shorter. */
+        const mu = 0.004;               /* Steady upward drift */
+        const sigma = Math.max(baseSigma * 1.8, 0.015); /* Moderate vol */
+        const crashProb = 0.03;         /* 3% chance of sharp crash */
+        const crashMin = 3;             /* Crash is 3-7x normal vol */
+        const crashMax = 7;
+        const bleedProb = 0.05;         /* 5% chance of downturn */
 
         /* Generate candles at 15-minute intervals */
         const intervalHours = 0.25;
@@ -1592,10 +1589,10 @@ const Projection = {
                 const crashMag = crashMin + Math.random() * (crashMax - crashMin);
                 stepReturn = -Math.abs(z) * sigma * Math.sqrt(dt) * crashMag;
             } else if (Math.random() < bleedProb) {
-                /* START BLEED — 5-15 candles of sustained selling */
-                bleedRemaining = 5 + Math.floor(Math.random() * 10);
-                bleedIntensity = 0.8 + Math.random() * 1.5;
-                stepReturn = -bleedIntensity * sigma * Math.sqrt(dt) + sigma * Math.sqrt(dt) * z * 0.4;
+                /* START BLEED — 3-8 candles of selling, moderate intensity */
+                bleedRemaining = 3 + Math.floor(Math.random() * 5);
+                bleedIntensity = 0.5 + Math.random() * 0.8;
+                stepReturn = -bleedIntensity * sigma * Math.sqrt(dt) + sigma * Math.sqrt(dt) * z * 0.5;
             } else {
                 /* Normal step — slight positive drift, full volatility both ways */
                 stepReturn = mu * dt + sigma * Math.sqrt(dt) * z;
