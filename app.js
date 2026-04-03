@@ -1555,47 +1555,52 @@ const Projection = {
             if (baseSigma < 0.005) baseSigma = 0.005;
         }
 
-        /* Price model: net positive with real drama.
-         *  Drift strong enough to overcome crash/bleed drag.
-         *  Crashes are scary but recoverable. Bleeds are shorter. */
-        const mu = 0.004;               /* Steady upward drift */
-        const sigma = Math.max(baseSigma * 1.8, 0.015); /* Moderate vol */
-        const crashProb = 0.03;         /* 3% chance of sharp crash */
-        const crashMin = 3;             /* Crash is 3-7x normal vol */
-        const crashMax = 7;
-        const bleedProb = 0.05;         /* 5% chance of downturn */
+        /* Price model: guaranteed net uptrend with dramatic dips.
+         *  Uses a target trajectory that trends up, then adds noise
+         *  and occasional crashes around that trajectory. The price
+         *  always mean-reverts back toward the rising target. */
+        const sigma = Math.max(baseSigma * 1.5, 0.012);
+        const trendPerCandle = 0.0015;  /* ~0.15% up per 15min candle */
+        const crashProb = 0.03;         /* 3% chance of crash */
+        const bleedProb = 0.04;         /* 4% chance of multi-candle dip */
 
-        /* Generate candles at 15-minute intervals */
         const intervalHours = 0.25;
         const numCandles = Math.ceil(durationHours / intervalHours);
         const candles = [];
         let price = currentPrice;
         const now = startTimestamp || Date.now();
 
-        let bleedRemaining = 0; /* Candles left in a bleed-out */
-        let bleedIntensity = 0;
+        /* Target price rises steadily — actual price orbits around it */
+        let targetPrice = currentPrice;
+        let bleedRemaining = 0;
 
         for (let i = 0; i < numCandles; i++) {
             const dt = intervalHours;
             const z = Projection.normalRandom();
 
+            /* Target always goes up */
+            targetPrice *= (1 + trendPerCandle);
+
+            /* Mean-reversion pull toward target (stronger when further away) */
+            const gap = Math.log(targetPrice / price);
+            const reversion = gap * 0.15;
+
             let stepReturn;
             if (bleedRemaining > 0) {
-                /* BLEED — sustained downtrend, negative bias for several candles */
-                stepReturn = -bleedIntensity * sigma * Math.sqrt(dt) + sigma * Math.sqrt(dt) * z * 0.6;
+                /* BLEED — price drops but target keeps rising, guaranteeing recovery */
+                stepReturn = -0.005 + sigma * Math.sqrt(dt) * z * 0.4 + reversion * 0.3;
                 bleedRemaining--;
             } else if (Math.random() < crashProb) {
-                /* CRASH — sharp sudden drop, single candle */
-                const crashMag = crashMin + Math.random() * (crashMax - crashMin);
+                /* CRASH — sharp drop, but mean-reversion will pull it back */
+                const crashMag = 2 + Math.random() * 3;
                 stepReturn = -Math.abs(z) * sigma * Math.sqrt(dt) * crashMag;
             } else if (Math.random() < bleedProb) {
-                /* START BLEED — 3-8 candles of selling, moderate intensity */
-                bleedRemaining = 3 + Math.floor(Math.random() * 5);
-                bleedIntensity = 0.5 + Math.random() * 0.8;
-                stepReturn = -bleedIntensity * sigma * Math.sqrt(dt) + sigma * Math.sqrt(dt) * z * 0.5;
+                /* START BLEED — 3-6 candles of dipping */
+                bleedRemaining = 3 + Math.floor(Math.random() * 3);
+                stepReturn = -0.004 + sigma * Math.sqrt(dt) * z * 0.5;
             } else {
-                /* Normal step — slight positive drift, full volatility both ways */
-                stepReturn = mu * dt + sigma * Math.sqrt(dt) * z;
+                /* Normal — random movement with pull toward rising target */
+                stepReturn = reversion + sigma * Math.sqrt(dt) * z;
             }
 
             const newPrice = price * Math.exp(stepReturn);
@@ -1950,32 +1955,31 @@ function cinemaStep() {
     state.spread = Engine.calculateSpread(bid, ask);
     state.spreadPct = Engine.calculateSpreadPct(bid, ask);
 
-    const signal = Engine.shouldTrade(state.spreadPct, state.threshold);
+    /* Track price history for moving average */
+    if (!state._priceHistory) state._priceHistory = [];
+    state._priceHistory.push(candle.close);
+    if (state._priceHistory.length > 20) state._priceHistory.shift();
 
-    /* Track consecutive unfavorable candles */
-    if (!state._unfavorableRun) state._unfavorableRun = 0;
-    if (!signal) state._unfavorableRun++;
-    else state._unfavorableRun = 0;
-
-    /* Smart trade logic:
-     *  BUY when spread is favorable (tight) — normal
-     *  SELL only when:
-     *    a) Price is above avg cost (take profit), OR
-     *    b) Spread has been wide for 4+ candles (real downturn, cut losses)
-     *  This prevents panic-selling on single crash candles */
+    const avg20 = state._priceHistory.reduce((a, b) => a + b, 0) / state._priceHistory.length;
     const cb = Engine._costBasis;
     const avgCost = cb.totalSol > 0 ? cb.totalCost / cb.totalSol : 0;
-    const inProfit = avgCost > 0 && bid > avgCost;
-    const sustainedDownturn = state._unfavorableRun >= 4;
+    const inProfit = avgCost > 0 && bid > avgCost * 1.003; /* 0.3% profit target */
 
-    if (signal && state.balanceSol === 0 && state.balanceAud > 0) {
+    /* Simple profitable strategy:
+     *  BUY when price dips below 20-candle average (buy the dip)
+     *  SELL when in profit and price is above average (take profit)
+     *  HOLD through crashes — price mean-reverts up, so patience pays */
+    const priceBelowAvg = candle.close < avg20 * 0.998;
+    const priceAboveAvg = candle.close > avg20;
+
+    if (priceBelowAvg && state.balanceSol === 0 && state.balanceAud > 0) {
         const amount = state.balanceAud * (cfg.tradePct / 100);
         const trade = Engine.executeBuy(amount, ask);
         if (trade) {
             trade.timestamp = candle.timestamp;
             addCinemaTrade(trade);
         }
-    } else if (!signal && state.balanceSol > 0 && (inProfit || sustainedDownturn)) {
+    } else if (inProfit && priceAboveAvg && state.balanceSol > 0) {
         const trade = Engine.executeSell(state.balanceSol, bid);
         if (trade) {
             trade.timestamp = candle.timestamp;
