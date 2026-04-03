@@ -2156,23 +2156,33 @@ function cinemaStep() {
     const avgCost = cb.totalSol > 0 ? cb.totalCost / cb.totalSol : 0;
     const profitPct = avgCost > 0 ? (bid - avgCost) / avgCost : 0;
 
-    /* Track how long we've been holding */
+    /* Track hold time and DCA count */
     if (!state._holdCandles) state._holdCandles = 0;
+    if (!state._dcaCount) state._dcaCount = 0;
     if (state.balanceSol > 0) state._holdCandles++;
 
-    /* Buy when dipping 0.2%+ below slow MA */
+    /* Dynamic profit target: 0.3% normally, 0.05% after 6 candles */
+    const profitTarget = state._holdCandles > 6 ? 0.0005 : 0.003;
     const isBuySignal = dipPct > 0.002 && fastMA < slowMA;
-    /* Dynamic profit target: 0.3% normally, drops to 0.05% after 8 candles.
-     * Prevents stagnation — takes small profit instead of waiting forever.
-     * Monte Carlo verified: $1731 avg vs $1091 without timeout. */
-    const profitTarget = state._holdCandles > 8 ? 0.0005 : 0.003;
+    const isDCA = state.balanceSol > 0 && dipPct > 0.005 && state.balanceAud > 100 && state._dcaCount < 3;
     const isSellSignal = profitPct > profitTarget;
 
     if (isBuySignal && state.balanceSol === 0 && state.balanceAud > 0) {
-        const sizePct = Math.min(0.8 + dipPct * 5, 0.95);
-        const amount = state.balanceAud * sizePct;
+        /* Initial entry — 60% of balance */
+        const amount = state.balanceAud * 0.6;
         state._totalFees += amount * TOTAL_FEE_PCT;
         state._holdCandles = 0;
+        state._dcaCount = 0;
+        const trade = Engine.executeBuy(amount, ask);
+        if (trade) {
+            trade.timestamp = candle.timestamp;
+            addCinemaTrade(trade);
+        }
+    } else if (isDCA) {
+        /* DCA — add 50% of remaining on further 0.5%+ dips, up to 3x */
+        const amount = state.balanceAud * 0.5;
+        state._totalFees += amount * TOTAL_FEE_PCT;
+        state._dcaCount++;
         const trade = Engine.executeBuy(amount, ask);
         if (trade) {
             trade.timestamp = candle.timestamp;
@@ -2182,6 +2192,7 @@ function cinemaStep() {
         const sellValue = state.balanceSol * bid;
         state._totalFees += sellValue * TOTAL_FEE_PCT;
         state._holdCandles = 0;
+        state._dcaCount = 0;
         const trade = Engine.executeSell(state.balanceSol, bid);
         if (trade) {
             trade.timestamp = candle.timestamp;
