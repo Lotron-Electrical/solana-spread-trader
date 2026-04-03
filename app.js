@@ -1569,7 +1569,7 @@ const Projection = {
             /* Mean-revert to anchor so price doesn't run away.
              * High vol creates big swings the strategy profits from. */
             const gap = Math.log(anchor / price);
-            const reversion = gap * 0.06;
+            const reversion = gap * 0.10;
             const stepReturn = reversion + sigma * Math.sqrt(dt) * z;
 
             const newPrice = price * Math.exp(stepReturn);
@@ -2105,7 +2105,7 @@ function cinemaStep() {
     const priceAboveMA = candle.close > ma * 1.002;   /* 0.2% above MA → sell */
 
     if (priceBelowMA && state.balanceSol === 0 && state.balanceAud > 0) {
-        const amount = state.balanceAud * 0.7;
+        const amount = state.balanceAud * 0.8;
         const trade = Engine.executeBuy(amount, ask);
         if (trade) {
             trade.timestamp = candle.timestamp;
@@ -2183,19 +2183,12 @@ function updateCinemaHUD(signal, timestamp) {
         pnlLabel.textContent = (rPnl >= 0 ? '+' : '') + UI.formatAud(rPnl);
         pnlLabel.style.color = rPnl >= 0 ? '#00e676' : '#ff4757';
     }
-    /* Profit rates based on P&L per day (last 96 candles = 24hrs).
-     * Derive hr/wk/mo from the daily rate. */
-    if (!state._pnlHistory) state._pnlHistory = [];
-    state._pnlHistory.push(rPnl);
+    /* Profit rates: total P&L / elapsed time from first candle to now */
     const ratesEl = $('cinema-pnl-rates');
-    if (ratesEl && state._pnlHistory.length > 4) {
-        const lookback = Math.min(state._pnlHistory.length, 96); /* 96 candles = 24hrs */
-        const pnlNow = state._pnlHistory[state._pnlHistory.length - 1];
-        const pnlThen = state._pnlHistory[state._pnlHistory.length - lookback];
-        const pnlOverPeriod = pnlNow - pnlThen;
-        const hoursInPeriod = lookback * 0.25;
-        const perDay = pnlOverPeriod * (24 / hoursInPeriod);
-        const perHr = perDay / 24;
+    if (ratesEl && state.watchIndex > 1) {
+        const elapsedHours = state.watchIndex * 0.25;
+        const perHr = rPnl / elapsedHours;
+        const perDay = perHr * 24;
         const perWeek = perDay * 7;
         const perMonth = perDay * 30;
         const fmt = v => (v >= 0 ? '+' : '') + 'A$' + v.toFixed(2);
