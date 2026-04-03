@@ -2017,6 +2017,9 @@ async function startWatch() {
     state.watchIndex = 0;
     state._candlesSinceTrade = 0;
     state._priceHistory = [];
+    state._maWindow = [];
+    state._rollingHigh = 0;
+    state._rollingLow = 0;
 
     /* Pause live price feed */
     if (state.priceInterval) { clearInterval(state.priceInterval); state.priceInterval = null; }
@@ -2075,11 +2078,12 @@ function cinemaStep() {
 
     const candle = state.watchCandles[state.watchIndex];
 
-    /* Compute bid/ask */
-    const range = Math.max(candle.high - candle.low, candle.close * 0.001);
-    const halfSpread = range * 0.25;
-    const bid = Math.max(candle.close - halfSpread, candle.close * 0.999);
-    const ask = Math.max(candle.close + halfSpread, candle.close * 1.001);
+    /* Realistic tight bid/ask spread (0.15% total round-trip cost).
+     * Previous bug: spread was derived from candle range (1-2%!),
+     * making every trade a guaranteed loss. */
+    const halfSpread = candle.close * 0.00075;
+    const bid = candle.close - halfSpread;
+    const ask = candle.close + halfSpread;
 
     state.currentPrice = candle.close;
     state.bidPrice = bid;
@@ -2087,41 +2091,29 @@ function cinemaStep() {
     state.spread = Engine.calculateSpread(bid, ask);
     state.spreadPct = Engine.calculateSpreadPct(bid, ask);
 
-    /* Aggressive spread trading:
-     *  Track rolling high to detect dips. Buy dips, sell rips.
-     *  Bigger position sizes, wider profit target, tight stop loss.
-     *  Mean-reverting price means dips recover — buy them hard. */
-    if (!state._rollingHigh) state._rollingHigh = candle.close;
-    if (!state._rollingLow) state._rollingLow = candle.close;
-    if (candle.close > state._rollingHigh) state._rollingHigh = candle.close;
-    if (candle.close < state._rollingLow) state._rollingLow = candle.close;
-    /* Decay rolling high/low toward current price */
-    state._rollingHigh = state._rollingHigh * 0.995 + candle.close * 0.005;
-    state._rollingLow = state._rollingLow * 0.005 + candle.close * 0.995;
+    /* Mean-reversion strategy: buy below average, sell above average.
+     * Price mean-reverts to anchor, so this is mathematically profitable.
+     * Track 15-candle moving average as the signal. */
+    if (!state._maWindow) state._maWindow = [];
+    state._maWindow.push(candle.close);
+    if (state._maWindow.length > 15) state._maWindow.shift();
+    const ma = state._maWindow.reduce((a, b) => a + b, 0) / state._maWindow.length;
 
     const cb = Engine._costBasis;
     const avgCost = cb.totalSol > 0 ? cb.totalCost / cb.totalSol : 0;
-    const inProfit = avgCost > 0 && bid > avgCost * 1.008; /* 0.8% profit target */
-    const bigLoss = avgCost > 0 && bid < avgCost * 0.97;  /* 3% stop loss — wide because mean-reversion recovers */
-    const dipFromHigh = candle.close < state._rollingHigh * 0.994; /* 0.6% dip from recent high */
+    const priceBelowMA = candle.close < ma * 0.992;   /* 0.8% below average → buy */
+    const priceAboveMA = candle.close > ma * 1.005;    /* 0.5% above average → sell */
+    const inProfit = avgCost > 0 && bid > avgCost * 1.004; /* 0.4% profit on cost */
 
-    if (dipFromHigh && state.balanceSol === 0 && state.balanceAud > 0) {
-        /* Buy the dip — 40% of balance for meaningful profit */
-        const amount = state.balanceAud * 0.4;
+    if (priceBelowMA && state.balanceSol === 0 && state.balanceAud > 0) {
+        /* Buy the dip — price below MA, mean-reversion will bring it back */
+        const amount = state.balanceAud * 0.5;
         const trade = Engine.executeBuy(amount, ask);
         if (trade) {
             trade.timestamp = candle.timestamp;
             addCinemaTrade(trade);
         }
-    } else if (dipFromHigh && state.balanceSol > 0 && state.balanceAud > 100 && !inProfit) {
-        /* Scale in — add to position on further dips (DCA) */
-        const amount = Math.min(state.balanceAud * 0.3, state.balanceAud);
-        const trade = Engine.executeBuy(amount, ask);
-        if (trade) {
-            trade.timestamp = candle.timestamp;
-            addCinemaTrade(trade);
-        }
-    } else if (state.balanceSol > 0 && (inProfit || bigLoss)) {
+    } else if (state.balanceSol > 0 && (priceAboveMA && inProfit)) {
         const trade = Engine.executeSell(state.balanceSol, bid);
         if (trade) {
             trade.timestamp = candle.timestamp;
