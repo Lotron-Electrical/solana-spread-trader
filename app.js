@@ -1572,9 +1572,9 @@ const Projection = {
             const newPrice = price * Math.exp(stepReturn);
 
             /* Generate OHLC — crashes have wide wicks */
-            const isCrash = stepReturn < -sigma * Math.sqrt(dt) * 2;
+            const isCrash = stepReturn < -CANDLE_SIGMA * 2;
             const wickMul = isCrash ? 1.5 : 0.5;
-            const intraVol = sigma * Math.sqrt(dt) * wickMul;
+            const intraVol = CANDLE_SIGMA * wickMul;
             const high = Math.max(price, newPrice) * (1 + Math.abs(Projection.normalRandom()) * intraVol);
             const low = Math.min(price, newPrice) * (1 - Math.abs(Projection.normalRandom()) * intraVol);
 
