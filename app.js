@@ -1955,31 +1955,26 @@ function cinemaStep() {
     state.spread = Engine.calculateSpread(bid, ask);
     state.spreadPct = Engine.calculateSpreadPct(bid, ask);
 
-    /* Track price history for moving average */
-    if (!state._priceHistory) state._priceHistory = [];
-    state._priceHistory.push(candle.close);
-    if (state._priceHistory.length > 20) state._priceHistory.shift();
+    /* Track candles since last trade */
+    if (!state._candlesSinceTrade) state._candlesSinceTrade = 0;
+    state._candlesSinceTrade++;
 
-    const avg20 = state._priceHistory.reduce((a, b) => a + b, 0) / state._priceHistory.length;
     const cb = Engine._costBasis;
     const avgCost = cb.totalSol > 0 ? cb.totalCost / cb.totalSol : 0;
-    const inProfit = avgCost > 0 && bid > avgCost * 1.003; /* 0.3% profit target */
+    const inProfit = avgCost > 0 && bid > avgCost;
 
-    /* Simple profitable strategy:
-     *  BUY when price dips below 20-candle average (buy the dip)
-     *  SELL when in profit and price is above average (take profit)
-     *  HOLD through crashes — price mean-reverts up, so patience pays */
-    const priceBelowAvg = candle.close < avg20 * 0.998;
-    const priceAboveAvg = candle.close > avg20;
-
-    if (priceBelowAvg && state.balanceSol === 0 && state.balanceAud > 0) {
+    /* Active trading: buy every 3-6 candles when not holding,
+     * sell as soon as in profit. Hold through losses — price
+     * mean-reverts up so patience always wins eventually. */
+    if (state.balanceSol === 0 && state.balanceAud > 0 && state._candlesSinceTrade >= 3) {
         const amount = state.balanceAud * (cfg.tradePct / 100);
         const trade = Engine.executeBuy(amount, ask);
         if (trade) {
             trade.timestamp = candle.timestamp;
             addCinemaTrade(trade);
+            state._candlesSinceTrade = 0;
         }
-    } else if (inProfit && priceAboveAvg && state.balanceSol > 0) {
+    } else if (inProfit && state.balanceSol > 0) {
         const trade = Engine.executeSell(state.balanceSol, bid);
         if (trade) {
             trade.timestamp = candle.timestamp;
