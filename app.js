@@ -1845,12 +1845,19 @@ async function startWatch() {
         return;
     }
 
-    /* Fetch recent data for volatility calibration */
-    UI.showNotification('Calibrating from recent volatility...', 'info');
-    const recentData = await API.fetchChartData(1);
+    /* Fetch recent data for volatility calibration — fall back to synthetic if API fails */
+    let recentData = await API.fetchChartData(1);
     if (!recentData || recentData.length < 10) {
-        UI.showNotification('Not enough recent data. Try again shortly.', 'error');
-        return;
+        /* Generate synthetic recent data so projection works offline / from file:// */
+        recentData = [];
+        const basePrice = state.currentPrice;
+        const now = Date.now();
+        for (let i = 50; i >= 0; i--) {
+            recentData.push({
+                timestamp: now - i * 30 * 60 * 1000,
+                price: basePrice * (1 + (Math.random() - 0.48) * 0.02),
+            });
+        }
     }
 
     /* Generate initial batch of candles (12h for unlimited, or the requested duration) */
