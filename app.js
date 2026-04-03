@@ -1550,53 +1550,29 @@ const Projection = {
             if (baseSigma < 0.005) baseSigma = 0.005;
         }
 
-        /* Price model: guaranteed net uptrend with dramatic dips.
-         *  Uses a target trajectory that trends up, then adds noise
-         *  and occasional crashes around that trajectory. The price
-         *  always mean-reverts back toward the rising target. */
-        const sigma = Math.max(baseSigma * 1.5, 0.012);
-        const trendPerCandle = 0.0015;  /* ~0.15% up per 15min candle */
-        const crashProb = 0.03;         /* 3% chance of crash */
-        const bleedProb = 0.04;         /* 4% chance of multi-candle dip */
+        /* Price model: realistic random walk — NO upward bias.
+         *  Price wanders naturally up and down like real crypto.
+         *  Profit comes from the spread trading strategy, not price direction.
+         *  Mean-reverts to starting price so it doesn't drift to zero or infinity. */
+        const sigma = Math.max(baseSigma * 1.8, 0.018);
 
         const intervalHours = 0.25;
         const numCandles = Math.ceil(durationHours / intervalHours);
         const candles = [];
         let price = currentPrice;
         const now = startTimestamp || Date.now();
-
-        /* Target price rises steadily — actual price orbits around it */
-        let targetPrice = currentPrice;
-        let bleedRemaining = 0;
+        const anchorPrice = currentPrice; /* Mean-revert to this */
 
         for (let i = 0; i < numCandles; i++) {
             const dt = intervalHours;
             const z = Projection.normalRandom();
 
-            /* Target always goes up */
-            targetPrice *= (1 + trendPerCandle);
+            /* Gentle mean-reversion to anchor — prevents runaway drift */
+            const gap = Math.log(anchorPrice / price);
+            const reversion = gap * 0.03;
 
-            /* Mean-reversion pull toward target (stronger when further away) */
-            const gap = Math.log(targetPrice / price);
-            const reversion = gap * 0.15;
-
-            let stepReturn;
-            if (bleedRemaining > 0) {
-                /* BLEED — price drops but target keeps rising, guaranteeing recovery */
-                stepReturn = -0.005 + sigma * Math.sqrt(dt) * z * 0.4 + reversion * 0.3;
-                bleedRemaining--;
-            } else if (Math.random() < crashProb) {
-                /* CRASH — sharp drop, but mean-reversion will pull it back */
-                const crashMag = 2 + Math.random() * 3;
-                stepReturn = -Math.abs(z) * sigma * Math.sqrt(dt) * crashMag;
-            } else if (Math.random() < bleedProb) {
-                /* START BLEED — 3-6 candles of dipping */
-                bleedRemaining = 3 + Math.floor(Math.random() * 3);
-                stepReturn = -0.004 + sigma * Math.sqrt(dt) * z * 0.5;
-            } else {
-                /* Normal — random movement with pull toward rising target */
-                stepReturn = reversion + sigma * Math.sqrt(dt) * z;
-            }
+            /* Pure random walk + mean-reversion */
+            const stepReturn = reversion + sigma * Math.sqrt(dt) * z;
 
             const newPrice = price * Math.exp(stepReturn);
 
@@ -2112,26 +2088,27 @@ function cinemaStep() {
     state.spread = Engine.calculateSpread(bid, ask);
     state.spreadPct = Engine.calculateSpreadPct(bid, ask);
 
-    /* Track candles since last trade */
-    if (!state._candlesSinceTrade) state._candlesSinceTrade = 0;
-    state._candlesSinceTrade++;
-
+    /* Spread-based trading:
+     *  BUY when spread is tight (favorable) — getting good fill
+     *  SELL when spread widens (unfavorable) and in profit,
+     *    OR hold and wait for profit if currently underwater.
+     *  The edge: buying at tight spreads means lower cost,
+     *  selling at wider spreads means the price has moved. */
+    const spreadSignal = Engine.shouldTrade(state.spreadPct, state.threshold);
     const cb = Engine._costBasis;
     const avgCost = cb.totalSol > 0 ? cb.totalCost / cb.totalSol : 0;
-    const inProfit = avgCost > 0 && bid > avgCost;
+    const inProfit = avgCost > 0 && bid > avgCost * 1.001;
+    const bigLoss = avgCost > 0 && bid < avgCost * 0.97; /* 3% stop loss */
 
-    /* Active trading: buy every 3-6 candles when not holding,
-     * sell as soon as in profit. Hold through losses — price
-     * mean-reverts up so patience always wins eventually. */
-    if (state.balanceSol === 0 && state.balanceAud > 0 && state._candlesSinceTrade >= 3) {
+    if (spreadSignal && state.balanceSol === 0 && state.balanceAud > 0) {
+        /* Tight spread — buy */
         const amount = state.balanceAud * (cfg.tradePct / 100);
         const trade = Engine.executeBuy(amount, ask);
         if (trade) {
             trade.timestamp = candle.timestamp;
             addCinemaTrade(trade);
-            state._candlesSinceTrade = 0;
         }
-    } else if (inProfit && state.balanceSol > 0) {
+    } else if (state.balanceSol > 0 && (inProfit || bigLoss)) {
         const trade = Engine.executeSell(state.balanceSol, bid);
         if (trade) {
             trade.timestamp = candle.timestamp;
