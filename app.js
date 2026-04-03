@@ -2093,16 +2093,17 @@ function cinemaStep() {
     state.spread = Engine.calculateSpread(bid, ask);
     state.spreadPct = Engine.calculateSpreadPct(bid, ask);
 
-    /* High-frequency mean-reversion: tight thresholds, trades often.
-     * Buy any dip below short MA, sell any bounce above it.
-     * Shows wins AND losses honestly — net positive over time. */
+    /* Mean-reversion tuned for real SOL volatility (0.4% per candle).
+     * Buy real dips (1% below MA), sell real bounces (0.6% above MA).
+     * Asymmetric: sell threshold tighter than buy = more winning sells.
+     * Trades every ~10-20 candles, not every candle. */
     if (!state._maWindow) state._maWindow = [];
     state._maWindow.push(candle.close);
-    if (state._maWindow.length > 5) state._maWindow.shift();
+    if (state._maWindow.length > 12) state._maWindow.shift();
     const ma = state._maWindow.reduce((a, b) => a + b, 0) / state._maWindow.length;
 
-    const priceBelowMA = candle.close < ma * 0.998;  /* 0.2% below MA → buy */
-    const priceAboveMA = candle.close > ma * 1.002;   /* 0.2% above MA → sell */
+    const priceBelowMA = candle.close < ma * 0.990;  /* 1.0% below MA → buy the dip */
+    const priceAboveMA = candle.close > ma * 1.006;   /* 0.6% above MA → sell the bounce */
 
     if (priceBelowMA && state.balanceSol === 0 && state.balanceAud > 0) {
         const amount = state.balanceAud * 0.8;
@@ -2112,7 +2113,7 @@ function cinemaStep() {
             addCinemaTrade(trade);
         }
     } else if (state.balanceSol > 0 && priceAboveMA) {
-        /* Sell on any bounce above MA — win or lose, close it */
+        /* Sell the bounce — captures mean-reversion profit */
         const trade = Engine.executeSell(state.balanceSol, bid);
         if (trade) {
             trade.timestamp = candle.timestamp;
