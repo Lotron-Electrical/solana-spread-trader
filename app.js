@@ -1555,16 +1555,18 @@ const Projection = {
             if (baseSigma < 0.005) baseSigma = 0.005;
         }
 
-        /* "Stairs up, elevator down" model:
-         *  - Positive drift (slow steady gains)
-         *  - Occasional sharp crashes (~5% chance per candle)
-         *  - Crashes are 3-8x normal volatility downward
-         *  - Net expectation is positive (overall making money) */
-        const mu = 0.008;               /* Positive drift — slow grind up */
-        const sigma = baseSigma * 1.2;  /* Slightly amplified base vol */
-        const crashProb = 0.05;         /* 5% chance of crash per candle */
-        const crashMin = 3;             /* Crash is 3-8x normal vol */
-        const crashMax = 8;
+        /* Realistic crypto price model:
+         *  - Tiny positive drift (barely noticeable per candle)
+         *  - High volatility with real two-way movement
+         *  - Occasional sharp crashes that wipe out many candles of gains
+         *  - Extended bleed-outs (multi-candle downtrends)
+         *  - Net slightly positive over long periods */
+        const mu = 0.001;               /* Barely positive drift */
+        const sigma = Math.max(baseSigma * 2.5, 0.025); /* Real crypto vol */
+        const crashProb = 0.04;         /* 4% chance of sharp crash */
+        const crashMin = 4;             /* Crash is 4-12x normal vol */
+        const crashMax = 12;
+        const bleedProb = 0.08;         /* 8% chance of sustained downturn */
 
         /* Generate candles at 15-minute intervals */
         const intervalHours = 0.25;
@@ -1573,17 +1575,29 @@ const Projection = {
         let price = currentPrice;
         const now = startTimestamp || Date.now();
 
+        let bleedRemaining = 0; /* Candles left in a bleed-out */
+        let bleedIntensity = 0;
+
         for (let i = 0; i < numCandles; i++) {
             const dt = intervalHours;
             const z = Projection.normalRandom();
 
             let stepReturn;
-            if (Math.random() < crashProb) {
-                /* CRASH — sharp sudden drop */
+            if (bleedRemaining > 0) {
+                /* BLEED — sustained downtrend, negative bias for several candles */
+                stepReturn = -bleedIntensity * sigma * Math.sqrt(dt) + sigma * Math.sqrt(dt) * z * 0.6;
+                bleedRemaining--;
+            } else if (Math.random() < crashProb) {
+                /* CRASH — sharp sudden drop, single candle */
                 const crashMag = crashMin + Math.random() * (crashMax - crashMin);
                 stepReturn = -Math.abs(z) * sigma * Math.sqrt(dt) * crashMag;
+            } else if (Math.random() < bleedProb) {
+                /* START BLEED — 5-15 candles of sustained selling */
+                bleedRemaining = 5 + Math.floor(Math.random() * 10);
+                bleedIntensity = 0.8 + Math.random() * 1.5;
+                stepReturn = -bleedIntensity * sigma * Math.sqrt(dt) + sigma * Math.sqrt(dt) * z * 0.4;
             } else {
-                /* Normal step with positive drift */
+                /* Normal step — slight positive drift, full volatility both ways */
                 stepReturn = mu * dt + sigma * Math.sqrt(dt) * z;
             }
 
