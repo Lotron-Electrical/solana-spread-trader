@@ -1,0 +1,12 @@
+# WASM build artifacts
+trading_engine.js
+trading_engine.wasm
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.swp
+*.swo

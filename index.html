@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solana Spread Trader — SOL/AUD</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'><defs><linearGradient id='g' x1='0' y1='0' x2='28' y2='28'><stop stop-color='%2300d4aa'/><stop offset='1' stop-color='%239945FF'/></linearGradient></defs><circle cx='14' cy='14' r='13' stroke='url(%23g)' stroke-width='2' fill='none'/><path d='M8 18L12 10L16 15L20 8' stroke='url(%23g)' stroke-width='2' stroke-linecap='round' fill='none'/></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- ── Header ── -->
+    <header id="app-header">
+        <div class="header-left">
+            <div class="logo">
+                <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                    <circle cx="14" cy="14" r="13" stroke="url(#grad)" stroke-width="2"/>
+                    <path d="M8 18L12 10L16 15L20 8" stroke="url(#grad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <defs><linearGradient id="grad" x1="0" y1="0" x2="28" y2="28"><stop stop-color="#00d4aa"/><stop offset="1" stop-color="#9945FF"/></linearGradient></defs>
+                </svg>
+                <span class="logo-text">SOL/AUD Spread Trader</span>
+            </div>
+        </div>
+        <div class="header-center">
+            <div class="mode-tabs">
+                <button class="mode-tab active" data-mode="paper">Paper Trading</button>
+                <button class="mode-tab" data-mode="simulation">Simulation</button>
+                <button class="mode-tab" data-mode="live">Live Trading</button>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="price-badge" id="live-price-badge">
+                <span class="price-label">SOL/AUD</span>
+                <span class="price-value" id="header-price">--</span>
+                <span class="price-change" id="header-change">--%</span>
+            </div>
+            <button class="btn btn-wallet" id="btn-connect-wallet">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M14 4H3V3h11a1 1 0 011 1zm0 1H2a1 1 0 00-1 1v7a1 1 0 001 1h12a1 1 0 001-1V6a1 1 0 00-1-1zm-2 5a1 1 0 110-2 1 1 0 010 2z"/></svg>
+                <span id="wallet-text">Connect Wallet</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- ── Main Dashboard ── -->
+    <main id="dashboard">
+        <!-- ── Left Column: Chart + Trade History ── -->
+        <section class="col-chart">
+            <div class="card chart-card">
+                <div class="card-header">
+                    <h2>SOL/AUD Price</h2>
+                    <div class="chart-controls">
+                        <button class="chart-period active" data-period="1h">1H</button>
+                        <button class="chart-period" data-period="24h">24H</button>
+                        <button class="chart-period" data-period="7d">7D</button>
+                        <button class="chart-period" data-period="30d">30D</button>
+                        <button class="chart-period" data-period="90d">90D</button>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="price-chart"></canvas>
+                    <div class="chart-overlay" id="chart-tooltip"></div>
+                </div>
+            </div>
+
+            <!-- Trade History -->
+            <div class="card trade-history-card">
+                <div class="card-header">
+                    <h2>Trade History</h2>
+                    <button class="btn btn-sm btn-ghost" id="btn-clear-trades">Clear</button>
+                </div>
+                <div class="table-wrap">
+                    <table id="trade-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Type</th>
+                                <th>Price (AUD)</th>
+                                <th>Amount (SOL)</th>
+                                <th>Total (AUD)</th>
+                                <th>Spread %</th>
+                                <th>P&L</th>
+                            </tr>
+                        </thead>
+                        <tbody id="trade-tbody"></tbody>
+                    </table>
+                    <div class="empty-state" id="trades-empty">No trades yet. Configure your spread threshold and start trading.</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ── Right Column: Trading Panel ── -->
+        <section class="col-trading">
+            <!-- Spread Monitor -->
+            <div class="card spread-card">
+                <div class="card-header">
+                    <h2>Spread Monitor</h2>
+                    <div class="spread-status" id="spread-status">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Waiting...</span>
+                    </div>
+                </div>
+                <div class="spread-display">
+                    <div class="spread-row">
+                        <div class="spread-item">
+                            <span class="spread-label">Buy (Ask)</span>
+                            <span class="spread-value ask" id="ask-price">--</span>
+                        </div>
+                        <div class="spread-item spread-center">
+                            <span class="spread-label">Spread</span>
+                            <span class="spread-value spread" id="current-spread">--%</span>
+                        </div>
+                        <div class="spread-item">
+                            <span class="spread-label">Sell (Bid)</span>
+                            <span class="spread-value bid" id="bid-price">--</span>
+                        </div>
+                    </div>
+                    <div class="spread-bar-container">
+                        <div class="spread-bar">
+                            <div class="spread-bar-fill" id="spread-bar-fill"></div>
+                            <div class="spread-bar-threshold" id="spread-bar-threshold"></div>
+                        </div>
+                        <div class="spread-bar-labels">
+                            <span>0%</span>
+                            <span id="threshold-marker">Threshold: --%</span>
+                            <span>5%</span>
+                        </div>
+                    </div>
+                    <div class="signal-display" id="signal-display">
+                        <span class="signal-icon">&#9679;</span>
+                        <span class="signal-text">Set threshold to begin</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trading Controls -->
+            <div class="card controls-card">
+                <div class="card-header">
+                    <h2>Trading Controls</h2>
+                </div>
+                <div class="controls-body">
+                    <div class="input-group">
+                        <label for="threshold-input">Spread Threshold (%)</label>
+                        <div class="input-with-hint">
+                            <input type="number" id="threshold-input" step="0.01" min="0.01" max="50" value="0.50" placeholder="0.50">
+                            <span class="input-hint">Trade when spread &lt; this value</span>
+                        </div>
+                    </div>
+                    <div class="input-group">
+                        <label for="trade-amount-input">Trade Amount (AUD)</label>
+                        <input type="number" id="trade-amount-input" step="1" min="1" value="100" placeholder="100">
+                    </div>
+                    <div class="input-group">
+                        <label for="auto-trade-toggle">Auto-Trade</label>
+                        <div class="toggle-row">
+                            <label class="toggle">
+                                <input type="checkbox" id="auto-trade-toggle">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span class="toggle-label" id="auto-trade-label">Off</span>
+                        </div>
+                    </div>
+                    <div class="trade-buttons">
+                        <button class="btn btn-buy" id="btn-buy">
+                            <span>Buy SOL</span>
+                            <small id="buy-preview">-- SOL</small>
+                        </button>
+                        <button class="btn btn-sell" id="btn-sell">
+                            <span>Sell SOL</span>
+                            <small id="sell-preview">-- AUD</small>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Portfolio Summary -->
+            <div class="card portfolio-card">
+                <div class="card-header">
+                    <h2>Portfolio</h2>
+                </div>
+                <div class="portfolio-grid">
+                    <div class="portfolio-item">
+                        <span class="portfolio-label">AUD Balance</span>
+                        <span class="portfolio-value" id="balance-aud">$10,000.00</span>
+                    </div>
+                    <div class="portfolio-item">
+                        <span class="portfolio-label">SOL Balance</span>
+                        <span class="portfolio-value" id="balance-sol">0.0000</span>
+                    </div>
+                    <div class="portfolio-item">
+                        <span class="portfolio-label">Total Value (AUD)</span>
+                        <span class="portfolio-value" id="total-value">$10,000.00</span>
+                    </div>
+                    <div class="portfolio-item">
+                        <span class="portfolio-label">P&L</span>
+                        <span class="portfolio-value pnl" id="total-pnl">$0.00 (0.00%)</span>
+                    </div>
+                    <div class="portfolio-item">
+                        <span class="portfolio-label">Win Rate</span>
+                        <span class="portfolio-value" id="win-rate">--</span>
+                    </div>
+                    <div class="portfolio-item">
+                        <span class="portfolio-label">Max Drawdown</span>
+                        <span class="portfolio-value" id="max-drawdown">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Simulation Panel (hidden by default) -->
+            <div class="card sim-card hidden" id="sim-panel">
+                <div class="card-header">
+                    <h2>Backtest Simulation</h2>
+                </div>
+                <div class="sim-body">
+                    <div class="sim-row">
+                        <div class="input-group">
+                            <label for="sim-start">Start Date</label>
+                            <input type="date" id="sim-start">
+                        </div>
+                        <div class="input-group">
+                            <label for="sim-end">End Date</label>
+                            <input type="date" id="sim-end">
+                        </div>
+                    </div>
+                    <div class="sim-row">
+                        <div class="input-group">
+                            <label for="sim-initial">Initial Balance (AUD)</label>
+                            <input type="number" id="sim-initial" value="10000" min="100" step="100">
+                        </div>
+                        <div class="input-group">
+                            <label for="sim-trade-pct">Trade Size (%)</label>
+                            <input type="number" id="sim-trade-pct" value="10" min="1" max="100" step="1">
+                        </div>
+                    </div>
+                    <div class="input-group">
+                        <label for="sim-threshold">Spread Threshold (%)</label>
+                        <input type="number" id="sim-threshold" step="0.01" min="0.01" max="50" value="0.50">
+                    </div>
+                    <button class="btn btn-primary btn-block" id="btn-run-sim">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2l10 6-10 6V2z"/></svg>
+                        Run Simulation
+                    </button>
+                    <div class="sim-progress hidden" id="sim-progress">
+                        <div class="progress-bar"><div class="progress-fill" id="sim-progress-fill"></div></div>
+                        <span class="progress-text" id="sim-progress-text">Running...</span>
+                    </div>
+
+                    <!-- Simulation Results -->
+                    <div class="sim-results hidden" id="sim-results">
+                        <h3>Results</h3>
+                        <div class="sim-results-grid">
+                            <div class="sim-result-item">
+                                <span class="sim-result-label">Final Balance</span>
+                                <span class="sim-result-value" id="sim-final-balance">--</span>
+                            </div>
+                            <div class="sim-result-item">
+                                <span class="sim-result-label">Total P&L</span>
+                                <span class="sim-result-value" id="sim-total-pnl">--</span>
+                            </div>
+                            <div class="sim-result-item">
+                                <span class="sim-result-label">Return %</span>
+                                <span class="sim-result-value" id="sim-return-pct">--</span>
+                            </div>
+                            <div class="sim-result-item">
+                                <span class="sim-result-label">Total Trades</span>
+                                <span class="sim-result-value" id="sim-total-trades">--</span>
+                            </div>
+                            <div class="sim-result-item">
+                                <span class="sim-result-label">Win Rate</span>
+                                <span class="sim-result-value" id="sim-win-rate">--</span>
+                            </div>
+                            <div class="sim-result-item">
+                                <span class="sim-result-label">Sharpe Ratio</span>
+                                <span class="sim-result-value" id="sim-sharpe">--</span>
+                            </div>
+                            <div class="sim-result-item">
+                                <span class="sim-result-label">Max Drawdown</span>
+                                <span class="sim-result-value" id="sim-max-dd">--</span>
+                            </div>
+                            <div class="sim-result-item">
+                                <span class="sim-result-label">Avg Trade P&L</span>
+                                <span class="sim-result-value" id="sim-avg-pnl">--</span>
+                            </div>
+                            <div class="sim-result-item">
+                                <span class="sim-result-label">Best Trade</span>
+                                <span class="sim-result-value" id="sim-best-trade">--</span>
+                            </div>
+                            <div class="sim-result-item">
+                                <span class="sim-result-label">Worst Trade</span>
+                                <span class="sim-result-value" id="sim-worst-trade">--</span>
+                            </div>
+                        </div>
+                        <div class="sim-chart-container">
+                            <canvas id="sim-equity-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live Warning (shown only in live mode) -->
+            <div class="card warning-card hidden" id="live-warning">
+                <div class="warning-icon">&#9888;</div>
+                <div class="warning-content">
+                    <h3>Real Money Trading</h3>
+                    <p>Live mode uses your connected Phantom wallet to execute real SOL trades on Solana mainnet via Jupiter DEX. You can lose real money. Start with small amounts.</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- ── Status Bar ── -->
+    <footer id="status-bar">
+        <div class="status-left">
+            <span class="status-item" id="status-mode">Mode: Paper Trading</span>
+            <span class="status-item" id="status-engine">Engine: JavaScript</span>
+        </div>
+        <div class="status-right">
+            <span class="status-item" id="status-api">API: Connecting...</span>
+            <span class="status-item" id="status-ws">Feed: --</span>
+            <span class="status-item" id="status-time"></span>
+        </div>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
