@@ -1322,11 +1322,13 @@ async function main() {
 
     /* Auto-launch cinema mode if #cinema hash present (borderless window launcher) */
     if (window.location.hash === '#cinema') {
-        /* Wait for first price to arrive, then auto-start unlimited projection */
+        let attempts = 0;
         const waitForPrice = setInterval(() => {
-            if (state.currentPrice > 0) {
+            attempts++;
+            if (state.currentPrice > 0 || attempts > 20) {
                 clearInterval(waitForPrice);
-                /* Set unlimited, 5x speed, then launch */
+                /* If no price after 10s, use a reasonable default */
+                if (state.currentPrice <= 0) state.currentPrice = 230;
                 if (UI.els['proj-duration']) UI.els['proj-duration'].value = '0';
                 if (UI.els['proj-speed']) UI.els['proj-speed'].value = '100';
                 startWatch();
@@ -1892,6 +1894,8 @@ async function startWatch() {
     state.watchPaused = false;
     state.watchCandles = candles;
     state.watchIndex = 0;
+    state._candlesSinceTrade = 0;
+    state._priceHistory = [];
 
     /* Pause live price feed */
     if (state.priceInterval) { clearInterval(state.priceInterval); state.priceInterval = null; }
