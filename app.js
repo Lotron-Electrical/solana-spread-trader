@@ -1319,6 +1319,20 @@ async function main() {
     setInterval(() => UI.updateStatusBar(), 1000);
     UI.updateStatusBar();
     UI.setFeedStatus(`${CONFIG.PRICE_POLL_MS / 1000}s poll`);
+
+    /* Auto-launch cinema mode if #cinema hash present (borderless window launcher) */
+    if (window.location.hash === '#cinema') {
+        /* Wait for first price to arrive, then auto-start unlimited projection */
+        const waitForPrice = setInterval(() => {
+            if (state.currentPrice > 0) {
+                clearInterval(waitForPrice);
+                /* Set unlimited, 5x speed, then launch */
+                if (UI.els['proj-duration']) UI.els['proj-duration'].value = '0';
+                if (UI.els['proj-speed']) UI.els['proj-speed'].value = '100';
+                startWatch();
+            }
+        }, 500);
+    }
 }
 
 /* ── Price Update Loop ── */
@@ -1839,9 +1853,6 @@ async function startWatch() {
     overlay.classList.remove('hidden');
     CinemaChart.init();
 
-    /* Try fullscreen */
-    try { await overlay.requestFullscreen(); } catch (_) { /* OK if denied */ }
-
     /* Seed chart with recent data */
     const seed = recentData.slice(-30).map(p => ({ timestamp: p.timestamp, price: p.price }));
     CinemaChart.setData(seed);
@@ -2000,11 +2011,6 @@ function finishWatch() {
     Engine.updatePnl();
     updateCinemaHUD(false, Date.now());
 
-    /* Exit fullscreen if active */
-    if (document.fullscreenElement) {
-        try { document.exitFullscreen(); } catch (_) {}
-    }
-
     /* Keep cinema up for a moment to show final state, then exit */
     setTimeout(() => exitCinema(), 3000);
 }
@@ -2021,11 +2027,6 @@ function exitCinema() {
     /* Hide cinema overlay */
     const overlay = document.getElementById('cinema-overlay');
     if (overlay) overlay.classList.add('hidden');
-
-    /* Exit fullscreen */
-    if (document.fullscreenElement) {
-        try { document.exitFullscreen(); } catch (_) {}
-    }
 
     /* Restore buttons */
     if (UI.els['btn-watch-sim']) UI.els['btn-watch-sim'].disabled = false;
