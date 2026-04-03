@@ -570,6 +570,13 @@ tbody tr:last-child td { border-bottom: none; }
     letter-spacing: -0.01em;
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+.cinema-label-value {
+    font-family: var(--mono);
+    color: var(--accent);
 }
 .cinema-chart {
     flex: 1;

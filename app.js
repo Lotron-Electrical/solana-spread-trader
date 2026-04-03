@@ -2149,6 +2149,8 @@ function updateCinemaHUD(signal, timestamp) {
     const $ = id => document.getElementById(id);
     const p = $('cinema-price');
     if (p) p.textContent = 'A$' + state.currentPrice.toFixed(2);
+    const pl = $('cinema-price-label');
+    if (pl) pl.textContent = 'A$' + state.currentPrice.toFixed(2);
 
     const sp = $('cinema-spread');
     if (sp) sp.textContent = state.spreadPct.toFixed(3) + '%';
