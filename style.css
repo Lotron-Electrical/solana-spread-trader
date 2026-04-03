@@ -653,19 +653,21 @@ tbody tr:last-child td { border-bottom: none; }
 .hud-controls .btn { color: var(--text-secondary); }
 .hud-controls .btn:hover { color: var(--text-primary); }
 
-/* Trade log overlay */
-.cinema-trades-log {
-    position: absolute;
-    bottom: 70px;
-    right: 16px;
+/* Trade log panel */
+.cinema-trades-panel {
     width: 280px;
-    max-height: 220px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-primary);
+}
+.cinema-trades-log {
+    flex: 1;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 4px;
-    pointer-events: none;
-    z-index: 10;
+    padding: 0.5rem;
 }
 .cinema-trade-item {
     padding: 0.4rem 0.65rem;
