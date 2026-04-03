@@ -2020,6 +2020,7 @@ async function startWatch() {
     state._maWindow = [];
     state._rollingHigh = 0;
     state._rollingLow = 0;
+    state._realizedPnl = 0;
 
     /* Pause live price feed */
     if (state.priceInterval) { clearInterval(state.priceInterval); state.priceInterval = null; }
@@ -2128,9 +2129,14 @@ function cinemaStep() {
     if (chartData.length > 120) chartData.splice(0, chartData.length - 120);
     CinemaChart.setData(chartData);
 
-    /* Update P&L chart */
-    const totalValue = state.balanceAud + (state.balanceSol * state.bidPrice);
-    const currentPnl = totalValue - state.initialAud;
+    /* Update P&L chart — realized profit only (from completed trades) */
+    if (!state._realizedPnl) state._realizedPnl = 0;
+    const lastTrade = state.trades.length > 0 ? state.trades[state.trades.length - 1] : null;
+    if (lastTrade && !lastTrade.isBuy && !lastTrade._counted) {
+        state._realizedPnl += lastTrade.pnl;
+        lastTrade._counted = true;
+    }
+    const currentPnl = state._realizedPnl;
     const pnlData = PnlChart.data.concat({ timestamp: candle.timestamp, pnl: currentPnl });
     if (pnlData.length > 120) pnlData.splice(0, pnlData.length - 120);
     PnlChart.setData(pnlData);
@@ -2168,15 +2174,16 @@ function updateCinemaHUD(signal, timestamp) {
         bal.textContent = UI.formatAud(total);
     }
 
+    const rPnl = state._realizedPnl || 0;
     const pnl = $('cinema-pnl');
     if (pnl) {
-        pnl.textContent = (state.totalPnl >= 0 ? '+' : '') + UI.formatAud(state.totalPnl);
-        pnl.style.color = state.totalPnl >= 0 ? '#00e676' : '#ff4757';
+        pnl.textContent = (rPnl >= 0 ? '+' : '') + UI.formatAud(rPnl);
+        pnl.style.color = rPnl >= 0 ? '#00e676' : '#ff4757';
     }
     const pnlLabel = $('cinema-pnl-label');
     if (pnlLabel) {
-        pnlLabel.textContent = (state.totalPnl >= 0 ? '+' : '') + UI.formatAud(state.totalPnl);
-        pnlLabel.style.color = state.totalPnl >= 0 ? '#00e676' : '#ff4757';
+        pnlLabel.textContent = (rPnl >= 0 ? '+' : '') + UI.formatAud(rPnl);
+        pnlLabel.style.color = rPnl >= 0 ? '#00e676' : '#ff4757';
     }
 
     const tr = $('cinema-trades');
