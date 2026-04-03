@@ -1544,15 +1544,27 @@ const Projection = {
             }
         }
 
-        /* Annualized drift and volatility (fallback to reasonable defaults) */
-        let mu = 0;
-        let sigma = 0.02; /* ~2% per sqrt(hour) default */
+        /* Calibrate base volatility from recent data */
+        let baseSigma = 0.015;
         if (returns.length >= 5) {
-            mu = returns.reduce((a, b) => a + b, 0) / returns.length;
-            const variance = returns.reduce((s, r) => s + (r - mu) ** 2, 0) / (returns.length - 1);
-            sigma = Math.sqrt(variance);
-            if (sigma < 0.001) sigma = 0.001; /* Floor to prevent flat projections */
+            const variance = returns.reduce((s, r) => {
+                const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+                return s + (r - mean) ** 2;
+            }, 0) / (returns.length - 1);
+            baseSigma = Math.sqrt(variance);
+            if (baseSigma < 0.005) baseSigma = 0.005;
         }
+
+        /* "Stairs up, elevator down" model:
+         *  - Positive drift (slow steady gains)
+         *  - Occasional sharp crashes (~5% chance per candle)
+         *  - Crashes are 3-8x normal volatility downward
+         *  - Net expectation is positive (overall making money) */
+        const mu = 0.008;               /* Positive drift — slow grind up */
+        const sigma = baseSigma * 1.2;  /* Slightly amplified base vol */
+        const crashProb = 0.05;         /* 5% chance of crash per candle */
+        const crashMin = 3;             /* Crash is 3-8x normal vol */
+        const crashMax = 8;
 
         /* Generate candles at 15-minute intervals */
         const intervalHours = 0.25;
@@ -1563,14 +1575,24 @@ const Projection = {
 
         for (let i = 0; i < numCandles; i++) {
             const dt = intervalHours;
-            /* GBM step: dS = S * (mu*dt + sigma*sqrt(dt)*Z) */
             const z = Projection.normalRandom();
-            const drift = mu * dt;
-            const diffusion = sigma * Math.sqrt(dt) * z;
-            const newPrice = price * Math.exp(drift + diffusion);
 
-            /* Generate OHLC from the step */
-            const intraVol = sigma * Math.sqrt(dt) * 0.5;
+            let stepReturn;
+            if (Math.random() < crashProb) {
+                /* CRASH — sharp sudden drop */
+                const crashMag = crashMin + Math.random() * (crashMax - crashMin);
+                stepReturn = -Math.abs(z) * sigma * Math.sqrt(dt) * crashMag;
+            } else {
+                /* Normal step with positive drift */
+                stepReturn = mu * dt + sigma * Math.sqrt(dt) * z;
+            }
+
+            const newPrice = price * Math.exp(stepReturn);
+
+            /* Generate OHLC — crashes have wide wicks */
+            const isCrash = stepReturn < -sigma * Math.sqrt(dt) * 2;
+            const wickMul = isCrash ? 1.5 : 0.5;
+            const intraVol = sigma * Math.sqrt(dt) * wickMul;
             const high = Math.max(price, newPrice) * (1 + Math.abs(Projection.normalRandom()) * intraVol);
             const low = Math.min(price, newPrice) * (1 - Math.abs(Projection.normalRandom()) * intraVol);
 
