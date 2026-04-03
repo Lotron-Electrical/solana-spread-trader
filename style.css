@@ -679,6 +679,9 @@ tbody tr:last-child td { border-bottom: none; }
 }
 .hud-controls .btn { color: var(--text-secondary); }
 .hud-controls .btn:hover { color: var(--text-primary); }
+.speed-btns { display: flex; gap: 2px; margin-right: 0.5rem; }
+.speed-btn { padding: 0.2rem 0.5rem !important; font-family: var(--mono) !important; font-size: 0.7rem !important; }
+.speed-btn.active { color: var(--accent) !important; background: var(--accent-dim) !important; }
 
 /* Trade log panel — right 1/4 */
 .cinema-trades-panel {

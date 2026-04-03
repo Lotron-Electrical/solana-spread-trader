@@ -1299,6 +1299,17 @@ async function main() {
         cinemaExit.addEventListener('click', stopWatch);
     }
 
+    /* Speed buttons */
+    document.querySelectorAll('.speed-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            if (state._watchConfig) {
+                state._watchConfig.speedMs = parseInt(btn.dataset.speed);
+            }
+        });
+    });
+
     /* Handle ESC from fullscreen — also stop watch */
     document.addEventListener('fullscreenchange', () => {
         if (!document.fullscreenElement && state.watchRunning) {
@@ -2163,11 +2174,12 @@ function cinemaStep() {
     if (!state._dcaCount) state._dcaCount = 0;
     if (state.balanceSol > 0) state._holdCandles++;
 
-    /* Optimized strategy: MA 3/15, 1%/1.2%, TO10, DCA4@0.8%
-     * Monte Carlo: $50/wk, 113 trades on $1k. Best frequency+profit combo. */
-    const profitTarget = state._holdCandles > 10 ? 0.004 : 0.012;
-    const isBuySignal = dipPct > 0.01 && fastMA < slowMA;
-    const isDCA = state.balanceSol > 0 && dipPct > 0.008 && state.balanceAud > 3 && state._dcaCount < 4;
+    /* Optimized: MA 3/15, aggressive entries, fast timeout.
+     * Buy at 0.5% dip, sell at 1% profit (drops to 0.2% after 8 candles).
+     * DCA 4x on further dips. High frequency + compounding. */
+    const profitTarget = state._holdCandles > 8 ? 0.002 : 0.01;
+    const isBuySignal = dipPct > 0.005 && fastMA < slowMA;
+    const isDCA = state.balanceSol > 0 && dipPct > 0.006 && state.balanceAud > 3 && state._dcaCount < 4;
     const isSellSignal = profitPct > profitTarget;
 
     if (isBuySignal && state.balanceSol === 0 && state.balanceAud > 0) {
