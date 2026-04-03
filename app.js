@@ -1534,7 +1534,7 @@ const Projection = {
      * @param {number} durationHours - How far to project
      * @returns {Array} Array of projected candles
      */
-    generateCandles(currentPrice, recentPrices, durationHours) {
+    generateCandles(currentPrice, recentPrices, durationHours, startTimestamp) {
         /* Calculate drift and volatility from recent data */
         const returns = [];
         for (let i = 1; i < recentPrices.length; i++) {
@@ -1559,7 +1559,7 @@ const Projection = {
         const numCandles = Math.ceil(durationHours / intervalHours);
         const candles = [];
         let price = currentPrice;
-        const now = Date.now();
+        const now = startTimestamp || Date.now();
 
         for (let i = 0; i < numCandles; i++) {
             const dt = intervalHours;
@@ -1890,9 +1890,11 @@ function cinemaStep() {
     /* If we've consumed all candles, either loop or finish */
     if (state.watchIndex >= state.watchCandles.length) {
         if (cfg.unlimited) {
-            /* Generate more candles from current price */
+            /* Generate more candles continuing from where the last batch ended */
             const lastPrice = state.currentPrice;
-            const newCandles = Projection.generateCandles(lastPrice, cfg.recentData, 12);
+            const lastCandle = state.watchCandles[state.watchCandles.length - 1];
+            const continueFrom = lastCandle ? lastCandle.timestamp : Date.now();
+            const newCandles = Projection.generateCandles(lastPrice, cfg.recentData, 12, continueFrom);
             state.watchCandles = newCandles;
             state.watchIndex = 0;
         } else {
