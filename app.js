@@ -1599,10 +1599,11 @@ const Projection = {
                 stepReturn += regimeDir * CANDLE_SIGMA * 0.3;
             }
 
-            /* Mean-reversion to anchor — 3% pull. Enough for strategy edge,
-             * weak enough that price still looks natural */
+            /* Mean-reversion — calibrated to real SOL autocorrelation (0.036).
+             * LOCKED: Do not change this value. Realistic price is non-negotiable.
+             * Profit comes from the strategy, not from rigging the price model. */
             const gap = Math.log(anchor / price);
-            stepReturn += gap * 0.55;
+            stepReturn += gap * 0.04;
 
             /* Anchor drifts slowly — range shifts over time */
             anchor = anchor * 0.998 + price * 0.002;
@@ -2145,8 +2146,8 @@ function cinemaStep() {
     if (!state._maSlow) state._maSlow = [];
     state._maFast.push(candle.close);
     state._maSlow.push(candle.close);
-    if (state._maFast.length > 3) state._maFast.shift();
-    if (state._maSlow.length > 12) state._maSlow.shift();
+    if (state._maFast.length > 5) state._maFast.shift();
+    if (state._maSlow.length > 30) state._maSlow.shift();
     const fastMA = state._maFast.reduce((a, b) => a + b, 0) / state._maFast.length;
     const slowMA = state._maSlow.reduce((a, b) => a + b, 0) / state._maSlow.length;
 
@@ -2162,15 +2163,15 @@ function cinemaStep() {
     if (!state._dcaCount) state._dcaCount = 0;
     if (state.balanceSol > 0) state._holdCandles++;
 
-    /* Dynamic profit target: 0.3% normally, 0.05% after 6 candles */
-    const profitTarget = state._holdCandles > 6 ? 0.0005 : 0.003;
-    const isBuySignal = dipPct > 0.002 && fastMA < slowMA;
-    const isDCA = state.balanceSol > 0 && dipPct > 0.005 && state.balanceAud > 100 && state._dcaCount < 3;
+    /* Trend strategy: wide thresholds for real moves, patient holds */
+    const profitTarget = state._holdCandles > 20 ? 0.008 : 0.02;
+    const isBuySignal = dipPct > 0.02 && fastMA < slowMA;
+    const isDCA = state.balanceSol > 0 && dipPct > 0.015 && state.balanceAud > 5 && state._dcaCount < 2;
     const isSellSignal = profitPct > profitTarget;
 
     if (isBuySignal && state.balanceSol === 0 && state.balanceAud > 0) {
-        /* Initial entry — 60% of balance */
-        const amount = state.balanceAud * 0.6;
+        /* Initial entry — 80% of balance for trend trades */
+        const amount = state.balanceAud * 0.8;
         state._totalFees += amount * TOTAL_FEE_PCT;
         state._holdCandles = 0;
         state._dcaCount = 0;
@@ -2180,8 +2181,8 @@ function cinemaStep() {
             addCinemaTrade(trade);
         }
     } else if (isDCA) {
-        /* DCA — add 50% of remaining on further 0.5%+ dips, up to 3x */
-        const amount = state.balanceAud * 0.5;
+        /* DCA — add 60% of remaining on further 1.5%+ dips, up to 2x */
+        const amount = state.balanceAud * 0.6;
         state._totalFees += amount * TOTAL_FEE_PCT;
         state._dcaCount++;
         const trade = Engine.executeBuy(amount, ask);
