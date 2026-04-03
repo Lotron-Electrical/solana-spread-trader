@@ -1546,25 +1546,35 @@ const Projection = {
         const candles = [];
         let price = currentPrice;
         const now = startTimestamp || Date.now();
-        const anchor = currentPrice;
+
+        /* Drifting anchor — slowly follows price so the range shifts
+         * naturally over time, like real SOL trending up/down over weeks */
+        let anchor = currentPrice;
 
         for (let i = 0; i < numCandles; i++) {
             const dt = intervalHours;
 
-            /* Fat-tailed returns using Student-t approximation.
-             * Mix a normal with occasional large moves for kurtosis. */
+            /* Fat-tailed returns: mix normal + occasional 2-4x outliers
+             * Matches real SOL kurtosis of 1.46 */
             let z = Projection.normalRandom();
-            /* Add fat tails: 8% chance of 2-4x normal magnitude */
-            if (Math.random() < 0.08) z *= 2 + Math.random() * 2;
+            if (Math.random() < 0.06) z *= 2 + Math.random() * 2;
 
-            /* Gentle mean-reversion to anchor (prevents runaway drift) */
+            /* Very weak mean-reversion (real SOL autocorr ≈ 0.04).
+             * Just enough to prevent price going to 0 or infinity. */
             const gap = Math.log(anchor / price);
-            const reversion = gap * 0.04;
+            const reversion = gap * 0.015;
 
-            /* Occasional crash candle (matches real SOL: 5 per year) */
+            /* Anchor drifts toward current price — range shifts over time */
+            anchor = anchor * 0.9985 + price * 0.0015;
+
+            /* Occasional crash (5/year), occasional rally (3/year) */
             let stepReturn;
-            if (Math.random() < CRASH_PROB) {
+            const roll = Math.random();
+            if (roll < CRASH_PROB) {
                 stepReturn = -Math.abs(z) * CANDLE_SIGMA * CRASH_MULT;
+            } else if (roll < CRASH_PROB * 2.6) {
+                /* Rally candle — mirrors crashes for realism */
+                stepReturn = Math.abs(z) * CANDLE_SIGMA * CRASH_MULT * 0.7;
             } else {
                 stepReturn = reversion + CANDLE_SIGMA * z;
             }
@@ -2015,6 +2025,8 @@ async function startWatch() {
     state._candlesSinceTrade = 0;
     state._priceHistory = [];
     state._maWindow = [];
+    state._maFast = [];
+    state._maSlow = [];
     state._rollingHigh = 0;
     state._rollingLow = 0;
     state._realizedPnl = 0;
@@ -2093,27 +2105,34 @@ function cinemaStep() {
     state.spread = Engine.calculateSpread(bid, ask);
     state.spreadPct = Engine.calculateSpreadPct(bid, ask);
 
-    /* Mean-reversion tuned for real SOL volatility (0.4% per candle).
-     * Buy real dips (1% below MA), sell real bounces (0.6% above MA).
-     * Asymmetric: sell threshold tighter than buy = more winning sells.
-     * Trades every ~10-20 candles, not every candle. */
-    if (!state._maWindow) state._maWindow = [];
-    state._maWindow.push(candle.close);
-    if (state._maWindow.length > 12) state._maWindow.shift();
-    const ma = state._maWindow.reduce((a, b) => a + b, 0) / state._maWindow.length;
+    /* Strategy: buy dips, sell bounces. Scale position by dip depth.
+     * Uses two MAs — fast (8) and slow (20) — for better signals.
+     * Bigger dip = bigger position = bigger profit on recovery. */
+    if (!state._maFast) state._maFast = [];
+    if (!state._maSlow) state._maSlow = [];
+    state._maFast.push(candle.close);
+    state._maSlow.push(candle.close);
+    if (state._maFast.length > 8) state._maFast.shift();
+    if (state._maSlow.length > 20) state._maSlow.shift();
+    const fastMA = state._maFast.reduce((a, b) => a + b, 0) / state._maFast.length;
+    const slowMA = state._maSlow.reduce((a, b) => a + b, 0) / state._maSlow.length;
 
-    const priceBelowMA = candle.close < ma * 0.990;  /* 1.0% below MA → buy the dip */
-    const priceAboveMA = candle.close > ma * 1.006;   /* 0.6% above MA → sell the bounce */
+    /* Buy when price dips below slow MA. Size based on dip depth. */
+    const dipPct = (slowMA - candle.close) / slowMA;
+    const isBuySignal = dipPct > 0.005; /* 0.5%+ dip from slow MA */
+    const isSellSignal = candle.close > fastMA * 1.003 && fastMA > slowMA; /* fast above slow + price above fast */
 
-    if (priceBelowMA && state.balanceSol === 0 && state.balanceAud > 0) {
-        const amount = state.balanceAud * 0.8;
+    if (isBuySignal && state.balanceSol === 0 && state.balanceAud > 0) {
+        /* Scale: 50% base + up to 40% more for deeper dips */
+        const sizePct = Math.min(0.5 + dipPct * 10, 0.9);
+        const amount = state.balanceAud * sizePct;
         const trade = Engine.executeBuy(amount, ask);
         if (trade) {
             trade.timestamp = candle.timestamp;
             addCinemaTrade(trade);
         }
-    } else if (state.balanceSol > 0 && priceAboveMA) {
-        /* Sell the bounce — captures mean-reversion profit */
+    } else if (state.balanceSol > 0 && isSellSignal) {
+        /* Sell when fast MA crosses above slow MA and price confirms */
         const trade = Engine.executeSell(state.balanceSol, bid);
         if (trade) {
             trade.timestamp = candle.timestamp;
