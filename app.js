@@ -2021,7 +2021,7 @@ async function startWatch() {
     state._rollingHigh = 0;
     state._rollingLow = 0;
     state._realizedPnl = 0;
-    state._pnlHistory = [];
+    state._startTimestamp = null;
 
     /* Pause live price feed */
     if (state.priceInterval) { clearInterval(state.priceInterval); state.priceInterval = null; }
@@ -2079,6 +2079,9 @@ function cinemaStep() {
     }
 
     const candle = state.watchCandles[state.watchIndex];
+
+    /* Record start timestamp from first candle */
+    if (!state._startTimestamp) state._startTimestamp = candle.timestamp;
 
     /* Realistic tight bid/ask spread (0.15% total round-trip cost).
      * Previous bug: spread was derived from candle range (1-2%!),
@@ -2183,16 +2186,22 @@ function updateCinemaHUD(signal, timestamp) {
         pnlLabel.textContent = (rPnl >= 0 ? '+' : '') + UI.formatAud(rPnl);
         pnlLabel.style.color = rPnl >= 0 ? '#00e676' : '#ff4757';
     }
-    /* Profit rates: total P&L / elapsed time from first candle to now */
+    /* Profit rates: total realized P&L / elapsed simulation time.
+     * Uses actual candle timestamps (start to current) so it
+     * survives batch boundaries in unlimited mode. */
     const ratesEl = $('cinema-pnl-rates');
-    if (ratesEl && state.watchIndex > 1) {
-        const elapsedHours = state.watchIndex * 0.25;
-        const perHr = rPnl / elapsedHours;
-        const perDay = perHr * 24;
+    if (ratesEl && state._startTimestamp && timestamp > state._startTimestamp) {
+        const elapsedMs = timestamp - state._startTimestamp;
+        const elapsedDays = elapsedMs / (24 * 60 * 60 * 1000);
+        const perDay = elapsedDays > 0 ? rPnl / elapsedDays : 0;
+        const perHr = perDay / 24;
         const perWeek = perDay * 7;
         const perMonth = perDay * 30;
         const fmt = v => (v >= 0 ? '+' : '') + 'A$' + v.toFixed(2);
-        ratesEl.textContent = `${fmt(perHr)}/hr  ${fmt(perDay)}/day  ${fmt(perWeek)}/wk  ${fmt(perMonth)}/mo`;
+        const elapsed = elapsedDays < 1
+            ? (elapsedDays * 24).toFixed(1) + 'hrs'
+            : elapsedDays.toFixed(1) + ' days';
+        ratesEl.textContent = `${elapsed} elapsed  ${fmt(perHr)}/hr  ${fmt(perDay)}/day  ${fmt(perWeek)}/wk  ${fmt(perMonth)}/mo`;
         ratesEl.style.color = perDay >= 0 ? '#00d4aa' : '#ff4757';
     }
 
