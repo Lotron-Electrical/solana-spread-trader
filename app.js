@@ -1309,6 +1309,7 @@ async function main() {
     /* ── Cinema mode: skip all network calls, launch immediately ── */
     if (window.CINEMA_MODE) {
         state.currentPrice = 230;
+        if (UI.els['sim-initial']) UI.els['sim-initial'].value = '1000';
         if (UI.els['proj-duration']) UI.els['proj-duration'].value = '0';
         if (UI.els['proj-speed']) UI.els['proj-speed'].value = '100';
         startWatch();
@@ -1601,7 +1602,7 @@ const Projection = {
             /* Mean-reversion to anchor — 3% pull. Enough for strategy edge,
              * weak enough that price still looks natural */
             const gap = Math.log(anchor / price);
-            stepReturn += gap * 0.10;
+            stepReturn += gap * 0.55;
 
             /* Anchor drifts slowly — range shifts over time */
             anchor = anchor * 0.998 + price * 0.002;
@@ -2295,6 +2296,38 @@ function updateCinemaHUD(signal, timestamp) {
     if (t) {
         const d = new Date(timestamp);
         t.textContent = d.toLocaleString('en-AU', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' });
+    }
+
+    /* $10k/week ETA — based on current weekly return rate compounding */
+    const etaEl = $('cinema-eta');
+    if (etaEl && state._startTimestamp && timestamp > state._startTimestamp) {
+        const elapsedMs = timestamp - state._startTimestamp;
+        const elapsedWeeks = elapsedMs / (7 * 24 * 60 * 60 * 1000);
+        const totalBalance = state.balanceAud + (state.balanceSol * state.bidPrice);
+        if (elapsedWeeks > 0.01 && rPnl > 0) {
+            /* Weekly return rate */
+            const weeklyReturnRate = rPnl / elapsedWeeks / state.initialAud;
+            /* Need balance where weeklyReturnRate * balance >= 10000 */
+            const targetBalance = 10000 / weeklyReturnRate;
+            /* Weeks to compound from current balance to target */
+            if (weeklyReturnRate > 0 && totalBalance > 0) {
+                const weeksToTarget = Math.log(targetBalance / totalBalance) / Math.log(1 + weeklyReturnRate);
+                if (weeksToTarget <= 0) {
+                    etaEl.textContent = 'NOW';
+                    etaEl.style.color = '#00e676';
+                } else if (weeksToTarget < 52) {
+                    const months = Math.ceil(weeksToTarget / 4.3);
+                    etaEl.textContent = months <= 1 ? '~1 month' : '~' + months + ' months';
+                    etaEl.style.color = '#00d4aa';
+                } else {
+                    etaEl.textContent = '~' + (weeksToTarget / 52).toFixed(1) + ' years';
+                    etaEl.style.color = '#ffc107';
+                }
+            }
+        } else {
+            etaEl.textContent = 'calculating...';
+            etaEl.style.color = '#555568';
+        }
     }
 }
 
