@@ -1550,24 +1550,27 @@ const Projection = {
             if (baseSigma < 0.005) baseSigma = 0.005;
         }
 
-        /* Price model: realistic crypto movement with slight upward tendency.
-         *  Looks natural — price wanders up and down with real volatility.
-         *  Tiny drift (0.05% per candle) gives the spread strategy an edge
-         *  without making the price chart look like it only goes up. */
-        const sigma = Math.max(baseSigma * 1.6, 0.015);
+        /* Price model: high volatility, mean-reverts to anchor.
+         *  Price swings hard but stays in a range around starting price.
+         *  Big swings = more spread trading opportunities = more profit. */
+        const sigma = Math.max(baseSigma * 2.5, 0.025);
 
         const intervalHours = 0.25;
         const numCandles = Math.ceil(durationHours / intervalHours);
         const candles = [];
         let price = currentPrice;
         const now = startTimestamp || Date.now();
+        const anchor = currentPrice;
 
         for (let i = 0; i < numCandles; i++) {
             const dt = intervalHours;
             const z = Projection.normalRandom();
 
-            /* Tiny upward drift + full random volatility */
-            const stepReturn = 0.0005 + sigma * Math.sqrt(dt) * z;
+            /* Mean-revert to anchor so price doesn't run away.
+             * High vol creates big swings the strategy profits from. */
+            const gap = Math.log(anchor / price);
+            const reversion = gap * 0.06;
+            const stepReturn = reversion + sigma * Math.sqrt(dt) * z;
 
             const newPrice = price * Math.exp(stepReturn);
 
@@ -2093,8 +2096,8 @@ function cinemaStep() {
     const spreadSignal = Engine.shouldTrade(state.spreadPct, state.threshold);
     const cb = Engine._costBasis;
     const avgCost = cb.totalSol > 0 ? cb.totalCost / cb.totalSol : 0;
-    const inProfit = avgCost > 0 && bid > avgCost * 1.001;
-    const bigLoss = avgCost > 0 && bid < avgCost * 0.97; /* 3% stop loss */
+    const inProfit = avgCost > 0 && bid > avgCost * 1.005; /* 0.5% profit target */
+    const bigLoss = avgCost > 0 && bid < avgCost * 0.985; /* 1.5% stop loss */
 
     if (spreadSignal && state.balanceSol === 0 && state.balanceAud > 0) {
         /* Tight spread — buy */
