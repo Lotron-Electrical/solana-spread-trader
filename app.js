@@ -1281,6 +1281,31 @@ async function main() {
         UI.els['btn-playback-stop'].addEventListener('click', stopWatch);
     }
 
+    /* Cinema mode controls */
+    const cinemaPause = document.getElementById('btn-cinema-pause');
+    if (cinemaPause) {
+        cinemaPause.addEventListener('click', () => {
+            state.watchPaused = !state.watchPaused;
+            const icon = document.getElementById('cinema-pause-icon');
+            if (icon) {
+                icon.innerHTML = state.watchPaused
+                    ? '<path d="M3 1l10 6-10 6V1z"/>'
+                    : '<rect x="2" y="1" width="4" height="12"/><rect x="8" y="1" width="4" height="12"/>';
+            }
+        });
+    }
+    const cinemaExit = document.getElementById('btn-cinema-exit');
+    if (cinemaExit) {
+        cinemaExit.addEventListener('click', stopWatch);
+    }
+
+    /* Handle ESC from fullscreen — also stop watch */
+    document.addEventListener('fullscreenchange', () => {
+        if (!document.fullscreenElement && state.watchRunning) {
+            /* User pressed ESC to exit fullscreen — keep running in cinema overlay */
+        }
+    });
+
     /* ── Start price feed ── */
     await updatePrice();
     await loadChartData();
@@ -1560,58 +1585,229 @@ const Projection = {
 
 
 /* ═══════════════════════════════════════════════════════════════
-   WATCH — Animated playback of projected trades
+   CINEMA CHART — Fullscreen canvas for projection playback
+   ═══════════════════════════════════════════════════════════════ */
+
+const CinemaChart = {
+    canvas: null,
+    ctx: null,
+    data: [],
+    tooltip: null,
+
+    init() {
+        CinemaChart.canvas = document.getElementById('cinema-canvas');
+        CinemaChart.tooltip = document.getElementById('cinema-tooltip');
+        if (!CinemaChart.canvas) return;
+        CinemaChart.ctx = CinemaChart.canvas.getContext('2d');
+        CinemaChart.resize();
+        window.addEventListener('resize', CinemaChart.resize);
+        CinemaChart.canvas.addEventListener('mousemove', CinemaChart.onMouseMove);
+        CinemaChart.canvas.addEventListener('mouseleave', () => {
+            CinemaChart._hovered = -1;
+            CinemaChart.draw();
+            if (CinemaChart.tooltip) CinemaChart.tooltip.style.display = 'none';
+        });
+    },
+
+    _hovered: -1,
+
+    resize() {
+        if (!CinemaChart.canvas) return;
+        const rect = CinemaChart.canvas.parentElement.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        CinemaChart.canvas.width = rect.width * dpr;
+        CinemaChart.canvas.height = rect.height * dpr;
+        CinemaChart.canvas.style.width = rect.width + 'px';
+        CinemaChart.canvas.style.height = rect.height + 'px';
+        CinemaChart.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        CinemaChart.draw();
+    },
+
+    setData(points) {
+        CinemaChart.data = points;
+        CinemaChart.draw();
+    },
+
+    draw() {
+        const ctx = CinemaChart.ctx;
+        const canvas = CinemaChart.canvas;
+        if (!ctx || !canvas || CinemaChart.data.length < 2) return;
+
+        const dpr = window.devicePixelRatio || 1;
+        const w = canvas.width / dpr;
+        const h = canvas.height / dpr;
+        const pad = { top: 30, right: 70, bottom: 40, left: 20 };
+        const plotW = w - pad.left - pad.right;
+        const plotH = h - pad.top - pad.bottom;
+
+        ctx.clearRect(0, 0, w, h);
+
+        const prices = CinemaChart.data.map(p => p.price);
+        const minP = Math.min(...prices) * 0.997;
+        const maxP = Math.max(...prices) * 1.003;
+        const range = maxP - minP || 1;
+
+        const toX = i => pad.left + (i / (CinemaChart.data.length - 1)) * plotW;
+        const toY = p => pad.top + plotH - ((p - minP) / range) * plotH;
+
+        /* Grid */
+        ctx.strokeStyle = '#1a1a2e';
+        ctx.lineWidth = 1;
+        for (let i = 0; i <= 6; i++) {
+            const y = pad.top + (i / 6) * plotH;
+            ctx.beginPath();
+            ctx.moveTo(pad.left, y);
+            ctx.lineTo(w - pad.right, y);
+            ctx.stroke();
+            const val = maxP - (i / 6) * range;
+            ctx.fillStyle = '#555568';
+            ctx.font = '11px JetBrains Mono, monospace';
+            ctx.textAlign = 'left';
+            ctx.fillText('A$' + val.toFixed(2), w - pad.right + 8, y + 4);
+        }
+
+        /* Time labels */
+        ctx.fillStyle = '#555568';
+        ctx.font = '11px JetBrains Mono, monospace';
+        ctx.textAlign = 'center';
+        for (let i = 0; i <= 6; i++) {
+            const idx = Math.floor((i / 6) * (CinemaChart.data.length - 1));
+            const x = toX(idx);
+            const d = new Date(CinemaChart.data[idx].timestamp);
+            ctx.fillText(d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' }), x, h - 12);
+        }
+
+        /* Area gradient */
+        const isUp = prices[prices.length - 1] >= prices[0];
+        const gradient = ctx.createLinearGradient(0, pad.top, 0, pad.top + plotH);
+        if (isUp) {
+            gradient.addColorStop(0, 'rgba(0, 212, 170, 0.2)');
+            gradient.addColorStop(1, 'rgba(0, 212, 170, 0.0)');
+        } else {
+            gradient.addColorStop(0, 'rgba(255, 71, 87, 0.2)');
+            gradient.addColorStop(1, 'rgba(255, 71, 87, 0.0)');
+        }
+
+        ctx.beginPath();
+        ctx.moveTo(toX(0), toY(prices[0]));
+        for (let i = 1; i < prices.length; i++) ctx.lineTo(toX(i), toY(prices[i]));
+        ctx.lineTo(toX(prices.length - 1), pad.top + plotH);
+        ctx.lineTo(toX(0), pad.top + plotH);
+        ctx.closePath();
+        ctx.fillStyle = gradient;
+        ctx.fill();
+
+        /* Line */
+        ctx.beginPath();
+        ctx.moveTo(toX(0), toY(prices[0]));
+        for (let i = 1; i < prices.length; i++) ctx.lineTo(toX(i), toY(prices[i]));
+        ctx.strokeStyle = isUp ? '#00d4aa' : '#ff4757';
+        ctx.lineWidth = 2.5;
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+
+        /* Current price dot (last point) */
+        const lastIdx = prices.length - 1;
+        const lx = toX(lastIdx);
+        const ly = toY(prices[lastIdx]);
+        ctx.beginPath();
+        ctx.arc(lx, ly, 5, 0, Math.PI * 2);
+        ctx.fillStyle = isUp ? '#00d4aa' : '#ff4757';
+        ctx.fill();
+        ctx.strokeStyle = '#06060b';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        /* Hover crosshair */
+        if (CinemaChart._hovered >= 0 && CinemaChart._hovered < prices.length) {
+            const hx = toX(CinemaChart._hovered);
+            const hy = toY(prices[CinemaChart._hovered]);
+            ctx.setLineDash([4, 4]);
+            ctx.strokeStyle = '#555568';
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(hx, pad.top); ctx.lineTo(hx, pad.top + plotH); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(pad.left, hy); ctx.lineTo(w - pad.right, hy); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.arc(hx, hy, 4, 0, Math.PI * 2);
+            ctx.fillStyle = isUp ? '#00d4aa' : '#ff4757';
+            ctx.fill();
+        }
+    },
+
+    onMouseMove(e) {
+        if (!CinemaChart.data.length) return;
+        const rect = CinemaChart.canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const pad = { left: 20, right: 70 };
+        const plotW = rect.width - pad.left - pad.right;
+        const ratio = (x - pad.left) / plotW;
+        const idx = Math.round(ratio * (CinemaChart.data.length - 1));
+        if (idx >= 0 && idx < CinemaChart.data.length) {
+            CinemaChart._hovered = idx;
+            CinemaChart.draw();
+            const point = CinemaChart.data[idx];
+            const d = new Date(point.timestamp);
+            CinemaChart.tooltip.innerHTML = `
+                <div style="color:#8888a0;font-size:10px">${d.toLocaleString('en-AU')}</div>
+                <div style="font-weight:600">A$${point.price.toFixed(4)}</div>
+            `;
+            CinemaChart.tooltip.style.display = 'block';
+            CinemaChart.tooltip.style.left = Math.min(e.clientX - rect.left + 12, rect.width - 160) + 'px';
+            CinemaChart.tooltip.style.top = (e.clientY - rect.top - 50) + 'px';
+        }
+    },
+};
+
+
+/* ═══════════════════════════════════════════════════════════════
+   WATCH — Cinema-mode animated projection playback
+   Enters fullscreen, chart fills the screen, HUD overlay,
+   continuous looping for unlimited mode.
    ═══════════════════════════════════════════════════════════════ */
 
 async function startWatch() {
     if (state.watchRunning || state.simRunning) return;
 
-    const durationHours = parseInt(UI.els['proj-duration']?.value) || 12;
+    const durationHours = parseInt(UI.els['proj-duration']?.value) || 0;
     const speedMs = parseInt(UI.els['proj-speed']?.value) || 100;
     const threshold = parseFloat(UI.els['sim-threshold']?.value) || state.threshold;
     const tradePct = parseFloat(UI.els['sim-trade-pct']?.value) || 10;
     const initialAud = parseFloat(UI.els['sim-initial']?.value) || 10000;
+    const unlimited = durationHours === 0;
 
     if (state.currentPrice <= 0) {
         UI.showNotification('Waiting for live price data before projecting...', 'error');
         return;
     }
 
-    /* Need recent price data for volatility calibration */
-    UI.showNotification('Fetching recent data for volatility calibration...', 'info');
-    const recentData = await API.fetchChartData(1); /* Last 24h */
+    /* Fetch recent data for volatility calibration */
+    UI.showNotification('Calibrating from recent volatility...', 'info');
+    const recentData = await API.fetchChartData(1);
     if (!recentData || recentData.length < 10) {
-        UI.showNotification('Not enough recent data to calibrate. Try again in a moment.', 'error');
+        UI.showNotification('Not enough recent data. Try again shortly.', 'error');
         return;
     }
 
-    /* Generate projected candles */
-    const candles = Projection.generateCandles(state.currentPrice, recentData, durationHours);
+    /* Generate initial batch of candles (12h for unlimited, or the requested duration) */
+    const batchHours = unlimited ? 12 : durationHours;
+    const candles = Projection.generateCandles(state.currentPrice, recentData, batchHours);
     if (!candles.length) {
         UI.showNotification('Failed to generate projection', 'error');
         return;
     }
 
-    /* Save current state to restore later */
+    /* Save current state */
     state.watchSavedState = {
-        balanceAud: state.balanceAud,
-        balanceSol: state.balanceSol,
-        initialAud: state.initialAud,
-        totalPnl: state.totalPnl,
-        totalPnlPct: state.totalPnlPct,
-        peakBalance: state.peakBalance,
-        maxDrawdown: state.maxDrawdown,
-        winRate: state.winRate,
-        totalTrades: state.totalTrades,
-        winningTrades: state.winningTrades,
-        losingTrades: state.losingTrades,
-        trades: [...state.trades],
-        currentPrice: state.currentPrice,
-        bidPrice: state.bidPrice,
-        askPrice: state.askPrice,
-        spread: state.spread,
-        spreadPct: state.spreadPct,
-        costBasis: { ...Engine._costBasis },
+        balanceAud: state.balanceAud, balanceSol: state.balanceSol,
+        initialAud: state.initialAud, totalPnl: state.totalPnl,
+        totalPnlPct: state.totalPnlPct, peakBalance: state.peakBalance,
+        maxDrawdown: state.maxDrawdown, winRate: state.winRate,
+        totalTrades: state.totalTrades, winningTrades: state.winningTrades,
+        losingTrades: state.losingTrades, trades: [...state.trades],
+        currentPrice: state.currentPrice, bidPrice: state.bidPrice,
+        askPrice: state.askPrice, spread: state.spread,
+        spreadPct: state.spreadPct, costBasis: { ...Engine._costBasis },
     };
 
     /* Reset state for projection */
@@ -1630,169 +1826,187 @@ async function startWatch() {
     state.threshold = threshold;
     Engine.resetCostBasis();
 
-    /* Prepare UI */
     state.watchRunning = true;
     state.watchPaused = false;
     state.watchCandles = candles;
     state.watchIndex = 0;
 
-    UI.clearTrades();
-    UI.updatePortfolio();
+    /* Pause live price feed */
+    if (state.priceInterval) { clearInterval(state.priceInterval); state.priceInterval = null; }
 
-    /* Pause the live price feed during watch */
-    if (state.priceInterval) {
-        clearInterval(state.priceInterval);
-        state.priceInterval = null;
-    }
+    /* Enter cinema mode */
+    const overlay = document.getElementById('cinema-overlay');
+    overlay.classList.remove('hidden');
+    CinemaChart.init();
 
-    /* Show playback controls */
-    const controls = UI.els['playback-controls'];
-    if (controls) controls.classList.remove('hidden');
-    UI.els['btn-watch-sim'].disabled = true;
-    UI.els['btn-run-sim'].disabled = true;
+    /* Try fullscreen */
+    try { await overlay.requestFullscreen(); } catch (_) { /* OK if denied */ }
 
-    /* Add watching class for visual feedback */
-    document.querySelector('.spread-card')?.classList.add('watching');
-    document.querySelector('.chart-card')?.classList.add('watching');
+    /* Seed chart with recent data */
+    const seed = recentData.slice(-30).map(p => ({ timestamp: p.timestamp, price: p.price }));
+    CinemaChart.setData(seed);
 
-    /* Initialize chart with current price + start of projection */
-    const chartSeed = recentData.slice(-20).map(p => ({
-        timestamp: p.timestamp,
-        price: p.price,
-    }));
-    Chart.setData(chartSeed);
+    /* Clear cinema trade log */
+    const log = document.getElementById('cinema-trades-log');
+    if (log) log.innerHTML = '';
 
-    UI.setFeedStatus('Projection');
-    UI.showNotification(`Projecting ${durationHours}h ahead — ${candles.length} candles`, 'info');
+    /* Store config for looping */
+    state._watchConfig = { speedMs, tradePct, unlimited, recentData, threshold };
 
     /* Start stepping */
-    watchStep(speedMs, tradePct);
+    cinemaStep();
 }
 
-function watchStep(speedMs, tradePct) {
+function cinemaStep() {
     if (!state.watchRunning) return;
     if (state.watchPaused) {
-        state.watchTimer = setTimeout(() => watchStep(speedMs, tradePct), 100);
+        state.watchTimer = setTimeout(cinemaStep, 100);
         return;
     }
 
+    const cfg = state._watchConfig;
+
+    /* If we've consumed all candles, either loop or finish */
     if (state.watchIndex >= state.watchCandles.length) {
-        finishWatch();
-        return;
+        if (cfg.unlimited) {
+            /* Generate more candles from current price */
+            const lastPrice = state.currentPrice;
+            const newCandles = Projection.generateCandles(lastPrice, cfg.recentData, 12);
+            state.watchCandles = newCandles;
+            state.watchIndex = 0;
+        } else {
+            finishWatch();
+            return;
+        }
     }
 
     const candle = state.watchCandles[state.watchIndex];
 
-    /* Calculate bid/ask from candle */
+    /* Compute bid/ask */
     const range = Math.max(candle.high - candle.low, candle.close * 0.001);
     const halfSpread = range * 0.25;
     const bid = Math.max(candle.close - halfSpread, candle.close * 0.999);
     const ask = Math.max(candle.close + halfSpread, candle.close * 1.001);
 
-    /* Update state as if this were a live price */
     state.currentPrice = candle.close;
     state.bidPrice = bid;
     state.askPrice = ask;
     state.spread = Engine.calculateSpread(bid, ask);
     state.spreadPct = Engine.calculateSpreadPct(bid, ask);
 
-    /* Check trading signal */
     const signal = Engine.shouldTrade(state.spreadPct, state.threshold);
 
-    /* Execute trades based on signal */
+    /* Execute trades */
     if (signal && state.balanceSol === 0 && state.balanceAud > 0) {
-        const amount = state.balanceAud * (tradePct / 100);
+        const amount = state.balanceAud * (cfg.tradePct / 100);
         const trade = Engine.executeBuy(amount, ask);
         if (trade) {
             trade.timestamp = candle.timestamp;
-            UI.addTradeRow(trade);
-            UI.showNotification(
-                `Predicted BUY: ${trade.amountSol.toFixed(4)} SOL at A$${trade.price.toFixed(2)}`,
-                'success'
-            );
+            addCinemaTrade(trade);
         }
     } else if (!signal && state.balanceSol > 0) {
         const trade = Engine.executeSell(state.balanceSol, bid);
         if (trade) {
             trade.timestamp = candle.timestamp;
-            UI.addTradeRow(trade);
-            const pnlStr = trade.pnl >= 0 ? '+' : '';
-            UI.showNotification(
-                `Predicted SELL: ${pnlStr}A$${trade.pnl.toFixed(2)} P&L`,
-                trade.pnl >= 0 ? 'success' : 'error'
-            );
+            addCinemaTrade(trade);
         }
     }
 
     Engine.updatePnl();
 
-    /* Update all UI */
-    UI.updatePrices();
-    UI.updatePortfolio();
+    /* Update cinema chart */
+    const chartData = CinemaChart.data.concat({ timestamp: candle.timestamp, price: candle.close });
+    if (chartData.length > 500) chartData.splice(0, chartData.length - 500);
+    CinemaChart.setData(chartData);
 
-    /* Build chart progressively */
-    const chartData = Chart.data.concat({ timestamp: candle.timestamp, price: candle.close });
-    /* Keep chart manageable */
-    if (chartData.length > 200) chartData.splice(0, chartData.length - 200);
-    Chart.setData(chartData);
-
-    /* Update playback progress */
-    const total = state.watchCandles.length;
-    const current = state.watchIndex + 1;
-    if (UI.els['playback-fill']) UI.els['playback-fill'].style.width = ((current / total) * 100) + '%';
-    if (UI.els['playback-counter']) UI.els['playback-counter'].textContent = `${current} / ${total}`;
-
-    /* Update time display */
-    const projTime = new Date(candle.timestamp);
-    if (UI.els['status-time']) UI.els['status-time'].textContent = projTime.toLocaleTimeString('en-AU');
+    /* Update cinema HUD */
+    updateCinemaHUD(signal, candle.timestamp);
 
     state.watchIndex++;
-    state.watchTimer = setTimeout(() => watchStep(speedMs, tradePct), speedMs);
+    state.watchTimer = setTimeout(cinemaStep, cfg.speedMs);
+}
+
+function updateCinemaHUD(signal, timestamp) {
+    const $ = id => document.getElementById(id);
+    const p = $('cinema-price');
+    if (p) p.textContent = 'A$' + state.currentPrice.toFixed(2);
+
+    const sp = $('cinema-spread');
+    if (sp) sp.textContent = state.spreadPct.toFixed(3) + '%';
+
+    const sig = $('cinema-signal');
+    if (sig) sig.className = 'hud-signal ' + (signal ? 'favorable' : 'unfavorable');
+
+    const bal = $('cinema-balance');
+    if (bal) {
+        const total = state.balanceAud + (state.balanceSol * state.bidPrice);
+        bal.textContent = UI.formatAud(total);
+    }
+
+    const pnl = $('cinema-pnl');
+    if (pnl) {
+        pnl.textContent = (state.totalPnl >= 0 ? '+' : '') + UI.formatAud(state.totalPnl);
+        pnl.style.color = state.totalPnl >= 0 ? '#00e676' : '#ff4757';
+    }
+
+    const tr = $('cinema-trades');
+    if (tr) tr.textContent = state.totalTrades;
+
+    const wr = $('cinema-winrate');
+    if (wr) wr.textContent = state.totalTrades > 0 ? UI.formatPct(state.winRate) : '--';
+
+    const t = $('cinema-time');
+    if (t) {
+        const d = new Date(timestamp);
+        t.textContent = d.toLocaleString('en-AU', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' });
+    }
+}
+
+function addCinemaTrade(trade) {
+    state.trades.push(trade);
+    const log = document.getElementById('cinema-trades-log');
+    if (!log) return;
+
+    const item = document.createElement('div');
+    item.className = 'cinema-trade-item ' + (trade.isBuy ? 'buy' : 'sell');
+
+    const time = new Date(trade.timestamp).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' });
+    const type = trade.isBuy ? 'BUY' : 'SELL';
+    const amt = trade.amountSol.toFixed(4);
+    const price = trade.price.toFixed(2);
+    let pnlHtml = '';
+    if (!trade.isBuy) {
+        const cls = trade.pnl >= 0 ? 'positive' : 'negative';
+        pnlHtml = `<span class="trade-pnl ${cls}">${trade.pnl >= 0 ? '+' : ''}A$${trade.pnl.toFixed(2)}</span>`;
+    }
+
+    item.innerHTML = `${time} ${type} ${amt} SOL @ A$${price}${pnlHtml}`;
+    log.appendChild(item);
+    log.scrollTop = log.scrollHeight;
+
+    /* Keep last 20 visible */
+    while (log.children.length > 20) log.removeChild(log.firstChild);
 }
 
 function finishWatch() {
     state.watchRunning = false;
     if (state.watchTimer) clearTimeout(state.watchTimer);
-    state.watchTimer = null;
 
     /* Close remaining position */
     if (state.balanceSol > 0 && state.bidPrice > 0) {
         const trade = Engine.executeSell(state.balanceSol, state.bidPrice);
-        if (trade) {
-            UI.addTradeRow(trade);
-        }
+        if (trade) addCinemaTrade(trade);
     }
     Engine.updatePnl();
-    UI.updatePortfolio();
+    updateCinemaHUD(false, Date.now());
 
-    /* Show final results */
-    const returnPct = state.initialAud > 0 ? (state.totalPnl / state.initialAud) * 100 : 0;
-    UI.showNotification(
-        `Projection complete: ${state.totalTrades} trades, ${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(2)}% predicted return`,
-        state.totalPnl >= 0 ? 'success' : 'error'
-    );
+    /* Exit fullscreen if active */
+    if (document.fullscreenElement) {
+        try { document.exitFullscreen(); } catch (_) {}
+    }
 
-    /* Update sim results panel with projection outcome */
-    const r = UI.els;
-    if (r['sim-final-balance']) r['sim-final-balance'].textContent = UI.formatAud(state.balanceAud);
-    if (r['sim-total-pnl']) {
-        r['sim-total-pnl'].textContent = UI.formatAud(state.totalPnl);
-        r['sim-total-pnl'].style.color = state.totalPnl >= 0 ? '#00e676' : '#ff4757';
-    }
-    if (r['sim-return-pct']) {
-        r['sim-return-pct'].textContent = (returnPct >= 0 ? '+' : '') + UI.formatPct(returnPct);
-        r['sim-return-pct'].style.color = returnPct >= 0 ? '#00e676' : '#ff4757';
-    }
-    if (r['sim-total-trades']) r['sim-total-trades'].textContent = state.totalTrades;
-    if (r['sim-win-rate']) r['sim-win-rate'].textContent = UI.formatPct(state.winRate);
-    if (r['sim-max-dd']) {
-        r['sim-max-dd'].textContent = UI.formatPct(state.maxDrawdown);
-        r['sim-max-dd'].style.color = '#ff4757';
-    }
-    const resultsEl = UI.els['sim-results'];
-    if (resultsEl) resultsEl.classList.remove('hidden');
-
-    cleanupWatch();
+    /* Keep cinema up for a moment to show final state, then exit */
+    setTimeout(() => exitCinema(), 3000);
 }
 
 function stopWatch() {
@@ -1800,59 +2014,55 @@ function stopWatch() {
     if (state.watchTimer) clearTimeout(state.watchTimer);
     state.watchTimer = null;
     restoreState();
-    cleanupWatch();
-    UI.showNotification('Projection stopped', 'info');
+    exitCinema();
+}
+
+function exitCinema() {
+    /* Hide cinema overlay */
+    const overlay = document.getElementById('cinema-overlay');
+    if (overlay) overlay.classList.add('hidden');
+
+    /* Exit fullscreen */
+    if (document.fullscreenElement) {
+        try { document.exitFullscreen(); } catch (_) {}
+    }
+
+    /* Restore buttons */
+    if (UI.els['btn-watch-sim']) UI.els['btn-watch-sim'].disabled = false;
+    if (UI.els['btn-run-sim']) UI.els['btn-run-sim'].disabled = false;
+
+    /* Restart live price feed */
+    if (!state.priceInterval) {
+        state.priceInterval = setInterval(async () => {
+            await updatePrice();
+            autoTradeCheck();
+        }, CONFIG.PRICE_POLL_MS);
+    }
+    UI.setFeedStatus(`${CONFIG.PRICE_POLL_MS / 1000}s poll`);
 }
 
 function restoreState() {
     const saved = state.watchSavedState;
     if (!saved) return;
 
-    state.balanceAud = saved.balanceAud;
-    state.balanceSol = saved.balanceSol;
-    state.initialAud = saved.initialAud;
-    state.totalPnl = saved.totalPnl;
-    state.totalPnlPct = saved.totalPnlPct;
-    state.peakBalance = saved.peakBalance;
-    state.maxDrawdown = saved.maxDrawdown;
-    state.winRate = saved.winRate;
-    state.totalTrades = saved.totalTrades;
-    state.winningTrades = saved.winningTrades;
-    state.losingTrades = saved.losingTrades;
-    state.trades = saved.trades;
-    state.currentPrice = saved.currentPrice;
-    state.bidPrice = saved.bidPrice;
-    state.askPrice = saved.askPrice;
-    state.spread = saved.spread;
-    state.spreadPct = saved.spreadPct;
+    Object.assign(state, {
+        balanceAud: saved.balanceAud, balanceSol: saved.balanceSol,
+        initialAud: saved.initialAud, totalPnl: saved.totalPnl,
+        totalPnlPct: saved.totalPnlPct, peakBalance: saved.peakBalance,
+        maxDrawdown: saved.maxDrawdown, winRate: saved.winRate,
+        totalTrades: saved.totalTrades, winningTrades: saved.winningTrades,
+        losingTrades: saved.losingTrades, trades: saved.trades,
+        currentPrice: saved.currentPrice, bidPrice: saved.bidPrice,
+        askPrice: saved.askPrice, spread: saved.spread,
+        spreadPct: saved.spreadPct,
+    });
     Engine._costBasis = saved.costBasis;
-
     state.watchSavedState = null;
 
-    /* Restore trade history display */
     UI.clearTrades();
     for (const trade of state.trades) UI.addTradeRow(trade);
     UI.updatePrices();
     UI.updatePortfolio();
-}
-
-function cleanupWatch() {
-    /* Hide playback controls */
-    const controls = UI.els['playback-controls'];
-    if (controls) controls.classList.add('hidden');
-    UI.els['btn-watch-sim'].disabled = false;
-    UI.els['btn-run-sim'].disabled = false;
-
-    /* Remove watching visual */
-    document.querySelector('.spread-card')?.classList.remove('watching');
-    document.querySelector('.chart-card')?.classList.remove('watching');
-
-    /* Restart live price feed */
-    state.priceInterval = setInterval(async () => {
-        await updatePrice();
-        autoTradeCheck();
-    }, CONFIG.PRICE_POLL_MS);
-    UI.setFeedStatus(`${CONFIG.PRICE_POLL_MS / 1000}s poll`);
 }
 
 

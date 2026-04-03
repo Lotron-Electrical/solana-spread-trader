@@ -527,6 +527,138 @@ tbody tr:last-child td { border-bottom: none; }
     box-shadow: 0 0 16px rgba(153, 69, 255, 0.15);
 }
 
+/* ── Cinema Mode ── */
+.cinema-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: var(--bg-primary);
+    display: flex;
+    flex-direction: column;
+}
+.cinema-chart {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+}
+#cinema-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+.cinema-tooltip {
+    position: absolute;
+    display: none;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    pointer-events: none;
+    z-index: 10;
+    white-space: nowrap;
+}
+
+/* HUD bar */
+.cinema-hud {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 1.5rem;
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border);
+    gap: 2rem;
+    flex-shrink: 0;
+}
+.hud-left, .hud-center, .hud-right { display: flex; align-items: center; gap: 1.5rem; }
+.hud-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+.hud-price {
+    font-family: var(--mono);
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: var(--accent);
+}
+.hud-spread {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-family: var(--mono);
+    font-size: 0.9rem;
+}
+.hud-signal {
+    font-size: 0.6rem;
+    transition: color 0.2s;
+}
+.hud-signal.favorable { color: var(--green); }
+.hud-signal.unfavorable { color: var(--red); }
+
+.hud-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    align-items: center;
+}
+.hud-label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.hud-stat span:last-child {
+    font-family: var(--mono);
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+.hud-time {
+    font-family: var(--mono);
+    font-size: 1rem;
+    color: var(--text-secondary);
+}
+.hud-controls {
+    display: flex;
+    gap: 0.3rem;
+}
+.hud-controls .btn { color: var(--text-secondary); }
+.hud-controls .btn:hover { color: var(--text-primary); }
+
+/* Trade log overlay */
+.cinema-trades-log {
+    position: absolute;
+    bottom: 70px;
+    right: 16px;
+    width: 280px;
+    max-height: 220px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    pointer-events: none;
+    z-index: 10;
+}
+.cinema-trade-item {
+    padding: 0.4rem 0.65rem;
+    background: rgba(13, 13, 21, 0.85);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    backdrop-filter: blur(8px);
+    animation: fadeIn 0.3s ease;
+}
+.cinema-trade-item.buy { border-left: 3px solid var(--green); color: var(--green); }
+.cinema-trade-item.sell { border-left: 3px solid var(--red); color: var(--red); }
+.cinema-trade-item .trade-pnl { color: var(--text-secondary); margin-left: 0.3rem; }
+.cinema-trade-item .trade-pnl.positive { color: var(--green); }
+.cinema-trade-item .trade-pnl.negative { color: var(--red); }
+
 /* ── Utilities ── */
 .hidden { display: none !important; }
 
