@@ -2169,6 +2169,11 @@ function updateCinemaHUD(signal, timestamp) {
         pnl.textContent = (state.totalPnl >= 0 ? '+' : '') + UI.formatAud(state.totalPnl);
         pnl.style.color = state.totalPnl >= 0 ? '#00e676' : '#ff4757';
     }
+    const pnlLabel = $('cinema-pnl-label');
+    if (pnlLabel) {
+        pnlLabel.textContent = (state.totalPnl >= 0 ? '+' : '') + UI.formatAud(state.totalPnl);
+        pnlLabel.style.color = state.totalPnl >= 0 ? '#00e676' : '#ff4757';
+    }
 
     const tr = $('cinema-trades');
     if (tr) tr.textContent = state.totalTrades;
