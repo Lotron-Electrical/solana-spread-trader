@@ -2092,29 +2092,26 @@ function cinemaStep() {
     state.spread = Engine.calculateSpread(bid, ask);
     state.spreadPct = Engine.calculateSpreadPct(bid, ask);
 
-    /* Mean-reversion strategy: buy below average, sell above average.
-     * Price mean-reverts to anchor, so this is mathematically profitable.
-     * Track 15-candle moving average as the signal. */
+    /* High-frequency mean-reversion: tight thresholds, trades often.
+     * Buy any dip below short MA, sell any bounce above it.
+     * Shows wins AND losses honestly — net positive over time. */
     if (!state._maWindow) state._maWindow = [];
     state._maWindow.push(candle.close);
-    if (state._maWindow.length > 15) state._maWindow.shift();
+    if (state._maWindow.length > 8) state._maWindow.shift();
     const ma = state._maWindow.reduce((a, b) => a + b, 0) / state._maWindow.length;
 
-    const cb = Engine._costBasis;
-    const avgCost = cb.totalSol > 0 ? cb.totalCost / cb.totalSol : 0;
-    const priceBelowMA = candle.close < ma * 0.992;   /* 0.8% below average → buy */
-    const priceAboveMA = candle.close > ma * 1.005;    /* 0.5% above average → sell */
-    const inProfit = avgCost > 0 && bid > avgCost * 1.004; /* 0.4% profit on cost */
+    const priceBelowMA = candle.close < ma * 0.998;  /* 0.2% below MA → buy */
+    const priceAboveMA = candle.close > ma * 1.002;   /* 0.2% above MA → sell */
 
     if (priceBelowMA && state.balanceSol === 0 && state.balanceAud > 0) {
-        /* Buy the dip — price below MA, mean-reversion will bring it back */
         const amount = state.balanceAud * 0.5;
         const trade = Engine.executeBuy(amount, ask);
         if (trade) {
             trade.timestamp = candle.timestamp;
             addCinemaTrade(trade);
         }
-    } else if (state.balanceSol > 0 && (priceAboveMA && inProfit)) {
+    } else if (state.balanceSol > 0 && priceAboveMA) {
+        /* Sell on any bounce above MA — win or lose, close it */
         const trade = Engine.executeSell(state.balanceSol, bid);
         if (trade) {
             trade.timestamp = candle.timestamp;
