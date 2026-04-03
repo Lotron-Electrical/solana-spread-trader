@@ -2087,21 +2087,35 @@ function cinemaStep() {
     state.spread = Engine.calculateSpread(bid, ask);
     state.spreadPct = Engine.calculateSpreadPct(bid, ask);
 
-    /* Spread-based trading:
-     *  BUY when spread is tight (favorable) — getting good fill
-     *  SELL when spread widens (unfavorable) and in profit,
-     *    OR hold and wait for profit if currently underwater.
-     *  The edge: buying at tight spreads means lower cost,
-     *  selling at wider spreads means the price has moved. */
-    const spreadSignal = Engine.shouldTrade(state.spreadPct, state.threshold);
+    /* Aggressive spread trading:
+     *  Track rolling high to detect dips. Buy dips, sell rips.
+     *  Bigger position sizes, wider profit target, tight stop loss.
+     *  Mean-reverting price means dips recover — buy them hard. */
+    if (!state._rollingHigh) state._rollingHigh = candle.close;
+    if (!state._rollingLow) state._rollingLow = candle.close;
+    if (candle.close > state._rollingHigh) state._rollingHigh = candle.close;
+    if (candle.close < state._rollingLow) state._rollingLow = candle.close;
+    /* Decay rolling high/low toward current price */
+    state._rollingHigh = state._rollingHigh * 0.995 + candle.close * 0.005;
+    state._rollingLow = state._rollingLow * 0.005 + candle.close * 0.995;
+
     const cb = Engine._costBasis;
     const avgCost = cb.totalSol > 0 ? cb.totalCost / cb.totalSol : 0;
-    const inProfit = avgCost > 0 && bid > avgCost * 1.005; /* 0.5% profit target */
-    const bigLoss = avgCost > 0 && bid < avgCost * 0.985; /* 1.5% stop loss */
+    const inProfit = avgCost > 0 && bid > avgCost * 1.008; /* 0.8% profit target */
+    const bigLoss = avgCost > 0 && bid < avgCost * 0.97;  /* 3% stop loss — wide because mean-reversion recovers */
+    const dipFromHigh = candle.close < state._rollingHigh * 0.994; /* 0.6% dip from recent high */
 
-    if (spreadSignal && state.balanceSol === 0 && state.balanceAud > 0) {
-        /* Tight spread — buy */
-        const amount = state.balanceAud * (cfg.tradePct / 100);
+    if (dipFromHigh && state.balanceSol === 0 && state.balanceAud > 0) {
+        /* Buy the dip — 40% of balance for meaningful profit */
+        const amount = state.balanceAud * 0.4;
+        const trade = Engine.executeBuy(amount, ask);
+        if (trade) {
+            trade.timestamp = candle.timestamp;
+            addCinemaTrade(trade);
+        }
+    } else if (dipFromHigh && state.balanceSol > 0 && state.balanceAud > 100 && !inProfit) {
+        /* Scale in — add to position on further dips (DCA) */
+        const amount = Math.min(state.balanceAud * 0.3, state.balanceAud);
         const trade = Engine.executeBuy(amount, ask);
         if (trade) {
             trade.timestamp = candle.timestamp;
