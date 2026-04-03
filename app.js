@@ -1562,7 +1562,7 @@ const Projection = {
             /* Very weak mean-reversion (real SOL autocorr ≈ 0.04).
              * Just enough to prevent price going to 0 or infinity. */
             const gap = Math.log(anchor / price);
-            const reversion = gap * 0.015;
+            const reversion = gap * 0.025;
 
             /* Anchor drifts toward current price — range shifts over time */
             anchor = anchor * 0.9985 + price * 0.0015;
@@ -2027,6 +2027,7 @@ async function startWatch() {
     state._maWindow = [];
     state._maFast = [];
     state._maSlow = [];
+    state._totalFees = 0;
     state._rollingHigh = 0;
     state._rollingLow = 0;
     state._realizedPnl = 0;
@@ -2092,10 +2093,13 @@ function cinemaStep() {
     /* Record start timestamp from first candle */
     if (!state._startTimestamp) state._startTimestamp = candle.timestamp;
 
-    /* Realistic tight bid/ask spread (0.15% total round-trip cost).
-     * Previous bug: spread was derived from candle range (1-2%!),
-     * making every trade a guaranteed loss. */
-    const halfSpread = candle.close * 0.00075;
+    /* Bid/ask spread includes all costs:
+     * - DEX spread: ~0.05% each side
+     * - Jupiter platform fee: 0.25% (on output)
+     * - Solana network fee: ~0.00025 SOL ≈ negligible
+     * Total effective cost: ~0.3% per side, 0.6% round trip */
+    const TOTAL_FEE_PCT = 0.003; /* 0.3% per side (spread + Jupiter + network) */
+    const halfSpread = candle.close * TOTAL_FEE_PCT;
     const bid = candle.close - halfSpread;
     const ask = candle.close + halfSpread;
 
@@ -2105,34 +2109,45 @@ function cinemaStep() {
     state.spread = Engine.calculateSpread(bid, ask);
     state.spreadPct = Engine.calculateSpreadPct(bid, ask);
 
-    /* Strategy: buy dips, sell bounces. Scale position by dip depth.
-     * Uses two MAs — fast (8) and slow (20) — for better signals.
-     * Bigger dip = bigger position = bigger profit on recovery. */
+    /* Strategy: buy dips, sell bounces. Accounts for 0.6% round-trip fees.
+     * Fast MA (5) / Slow MA (15). Need 1%+ moves to clear fee hurdle.
+     * Trades frequently — every ~5-10 candles. */
     if (!state._maFast) state._maFast = [];
     if (!state._maSlow) state._maSlow = [];
     state._maFast.push(candle.close);
     state._maSlow.push(candle.close);
-    if (state._maFast.length > 8) state._maFast.shift();
-    if (state._maSlow.length > 20) state._maSlow.shift();
+    if (state._maFast.length > 5) state._maFast.shift();
+    if (state._maSlow.length > 15) state._maSlow.shift();
     const fastMA = state._maFast.reduce((a, b) => a + b, 0) / state._maFast.length;
     const slowMA = state._maSlow.reduce((a, b) => a + b, 0) / state._maSlow.length;
 
-    /* Buy when price dips below slow MA. Size based on dip depth. */
+    /* Track total fees paid */
+    if (!state._totalFees) state._totalFees = 0;
+
+    /* Buy when price dips below slow MA. */
     const dipPct = (slowMA - candle.close) / slowMA;
-    const isBuySignal = dipPct > 0.005; /* 0.5%+ dip from slow MA */
-    const isSellSignal = candle.close > fastMA * 1.003 && fastMA > slowMA; /* fast above slow + price above fast */
+    const isBuySignal = dipPct > 0.008; /* 0.8%+ dip — enough room to profit after fees */
+    const cb = Engine._costBasis;
+    const avgCost = cb.totalSol > 0 ? cb.totalCost / cb.totalSol : 0;
+    const profitPct = avgCost > 0 ? (bid - avgCost) / avgCost : 0;
+    const isSellSignal = profitPct > 0.008 || /* 0.8% profit (clears fees) */
+                         (candle.close > fastMA * 1.005 && profitPct > 0.003); /* or 0.3% on MA cross */
 
     if (isBuySignal && state.balanceSol === 0 && state.balanceAud > 0) {
-        /* Scale: 50% base + up to 40% more for deeper dips */
-        const sizePct = Math.min(0.5 + dipPct * 10, 0.9);
+        /* Scale: 60% base + up to 30% more for deeper dips */
+        const sizePct = Math.min(0.6 + dipPct * 8, 0.9);
         const amount = state.balanceAud * sizePct;
+        const fee = amount * TOTAL_FEE_PCT;
+        state._totalFees += fee;
         const trade = Engine.executeBuy(amount, ask);
         if (trade) {
             trade.timestamp = candle.timestamp;
             addCinemaTrade(trade);
         }
     } else if (state.balanceSol > 0 && isSellSignal) {
-        /* Sell when fast MA crosses above slow MA and price confirms */
+        /* Sell — take profit. Fee on the sell side too. */
+        const sellValue = state.balanceSol * bid;
+        state._totalFees += sellValue * TOTAL_FEE_PCT;
         const trade = Engine.executeSell(state.balanceSol, bid);
         if (trade) {
             trade.timestamp = candle.timestamp;
@@ -2187,10 +2202,13 @@ function updateCinemaHUD(signal, timestamp) {
     if (sig) sig.className = 'hud-signal ' + (signal ? 'favorable' : 'unfavorable');
 
     const bal = $('cinema-balance');
-    if (bal) {
-        const total = state.balanceAud + (state.balanceSol * state.bidPrice);
-        bal.textContent = UI.formatAud(total);
-    }
+    if (bal) bal.textContent = UI.formatAud(state.balanceAud);
+
+    const solBal = $('cinema-sol-balance');
+    if (solBal) solBal.textContent = state.balanceSol.toFixed(4) + ' SOL';
+
+    const feesEl = $('cinema-fees');
+    if (feesEl) feesEl.textContent = UI.formatAud(state._totalFees || 0);
 
     const rPnl = state._realizedPnl || 0;
     const pnl = $('cinema-pnl');
