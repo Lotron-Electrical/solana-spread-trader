@@ -578,6 +578,13 @@ tbody tr:last-child td { border-bottom: none; }
     font-family: var(--mono);
     color: var(--accent);
 }
+.cinema-label-rates {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    margin-left: 0.5rem;
+}
 .cinema-chart {
     flex: 1;
     position: relative;

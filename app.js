@@ -2182,6 +2182,18 @@ function updateCinemaHUD(signal, timestamp) {
         pnlLabel.textContent = (rPnl >= 0 ? '+' : '') + UI.formatAud(rPnl);
         pnlLabel.style.color = rPnl >= 0 ? '#00e676' : '#ff4757';
     }
+    /* Profit rates: per hr / day / week / month */
+    const ratesEl = $('cinema-pnl-rates');
+    if (ratesEl && state.watchIndex > 4) {
+        const elapsedHours = (state.watchIndex * 0.25) || 1;
+        const perHr = rPnl / elapsedHours;
+        const perDay = perHr * 24;
+        const perWeek = perDay * 7;
+        const perMonth = perDay * 30;
+        const fmt = v => (v >= 0 ? '+' : '') + 'A$' + v.toFixed(2);
+        ratesEl.textContent = `${fmt(perHr)}/hr  ${fmt(perDay)}/day  ${fmt(perWeek)}/wk  ${fmt(perMonth)}/mo`;
+        ratesEl.style.color = perHr >= 0 ? '#00d4aa' : '#ff4757';
+    }
 
     const tr = $('cinema-trades');
     if (tr) tr.textContent = state.totalTrades;
