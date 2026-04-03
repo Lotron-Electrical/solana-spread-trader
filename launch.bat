@@ -2,7 +2,7 @@
 :: Solana Spread Trader — Borderless Window Launcher
 :: Opens in Chrome app mode (no tabs, no address bar, no browser UI)
 
-set "APP_PATH=%~dp0index.html"
+set "APP_PATH=%~dp0cinema.html"
 set "CHROME="
 
 :: Find Chrome
@@ -21,4 +21,4 @@ if "%CHROME%"=="" (
 )
 
 :: Launch in app mode — borderless window, no browser UI
-start "" "%CHROME%" --app="file:///%APP_PATH:\=/%#cinema" --window-size=1400,800 --window-position=80,40
+start "" "%CHROME%" --app="file:///%APP_PATH:\=/%" --window-size=1400,800 --window-position=80,40

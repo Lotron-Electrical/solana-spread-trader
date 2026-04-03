@@ -1306,7 +1306,16 @@ async function main() {
         }
     });
 
-    /* ── Start price feed ── */
+    /* ── Cinema mode: skip all network calls, launch immediately ── */
+    if (window.CINEMA_MODE) {
+        state.currentPrice = 230;
+        if (UI.els['proj-duration']) UI.els['proj-duration'].value = '0';
+        if (UI.els['proj-speed']) UI.els['proj-speed'].value = '100';
+        startWatch();
+        return; /* Don't start the normal price feed */
+    }
+
+    /* ── Start price feed (normal mode only) ── */
     await updatePrice();
     await loadChartData();
 
@@ -1319,22 +1328,6 @@ async function main() {
     setInterval(() => UI.updateStatusBar(), 1000);
     UI.updateStatusBar();
     UI.setFeedStatus(`${CONFIG.PRICE_POLL_MS / 1000}s poll`);
-
-    /* Auto-launch cinema mode if #cinema hash present (borderless window launcher) */
-    if (window.location.hash === '#cinema') {
-        let attempts = 0;
-        const waitForPrice = setInterval(() => {
-            attempts++;
-            if (state.currentPrice > 0 || attempts > 20) {
-                clearInterval(waitForPrice);
-                /* If no price after 10s, use a reasonable default */
-                if (state.currentPrice <= 0) state.currentPrice = 230;
-                if (UI.els['proj-duration']) UI.els['proj-duration'].value = '0';
-                if (UI.els['proj-speed']) UI.els['proj-speed'].value = '100';
-                startWatch();
-            }
-        }, 500);
-    }
 }
 
 /* ── Price Update Loop ── */
