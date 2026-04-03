@@ -1931,11 +1931,6 @@ const PnlChart = {
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        /* Big P&L text in top-left */
-        ctx.font = 'bold 18px JetBrains Mono, monospace';
-        ctx.fillStyle = isUp ? '#00e676' : '#ff4757';
-        ctx.textAlign = 'left';
-        ctx.fillText((lastPnl >= 0 ? '+' : '') + 'A$' + lastPnl.toFixed(2), pad.left + 8, pad.top + 20);
     },
 };
 
