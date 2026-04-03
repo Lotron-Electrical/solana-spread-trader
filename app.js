@@ -1952,7 +1952,22 @@ function cinemaStep() {
 
     const signal = Engine.shouldTrade(state.spreadPct, state.threshold);
 
-    /* Execute trades */
+    /* Track consecutive unfavorable candles */
+    if (!state._unfavorableRun) state._unfavorableRun = 0;
+    if (!signal) state._unfavorableRun++;
+    else state._unfavorableRun = 0;
+
+    /* Smart trade logic:
+     *  BUY when spread is favorable (tight) — normal
+     *  SELL only when:
+     *    a) Price is above avg cost (take profit), OR
+     *    b) Spread has been wide for 4+ candles (real downturn, cut losses)
+     *  This prevents panic-selling on single crash candles */
+    const cb = Engine._costBasis;
+    const avgCost = cb.totalSol > 0 ? cb.totalCost / cb.totalSol : 0;
+    const inProfit = avgCost > 0 && bid > avgCost;
+    const sustainedDownturn = state._unfavorableRun >= 4;
+
     if (signal && state.balanceSol === 0 && state.balanceAud > 0) {
         const amount = state.balanceAud * (cfg.tradePct / 100);
         const trade = Engine.executeBuy(amount, ask);
@@ -1960,7 +1975,7 @@ function cinemaStep() {
             trade.timestamp = candle.timestamp;
             addCinemaTrade(trade);
         }
-    } else if (!signal && state.balanceSol > 0) {
+    } else if (!signal && state.balanceSol > 0 && (inProfit || sustainedDownturn)) {
         const trade = Engine.executeSell(state.balanceSol, bid);
         if (trade) {
             trade.timestamp = candle.timestamp;
