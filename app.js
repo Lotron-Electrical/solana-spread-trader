@@ -1818,6 +1818,158 @@ const CinemaChart = {
 
 
 /* ═══════════════════════════════════════════════════════════════
+   PNL CHART — Profit & Loss over time (right panel in cinema)
+   ═══════════════════════════════════════════════════════════════ */
+
+const PnlChart = {
+    canvas: null,
+    ctx: null,
+    data: [], /* [{timestamp, pnl}] */
+
+    init() {
+        PnlChart.canvas = document.getElementById('cinema-pnl-canvas');
+        if (!PnlChart.canvas) return;
+        PnlChart.ctx = PnlChart.canvas.getContext('2d');
+        PnlChart.resize();
+        window.addEventListener('resize', PnlChart.resize);
+    },
+
+    resize() {
+        if (!PnlChart.canvas) return;
+        const rect = PnlChart.canvas.parentElement.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        PnlChart.canvas.width = rect.width * dpr;
+        PnlChart.canvas.height = rect.height * dpr;
+        PnlChart.canvas.style.width = rect.width + 'px';
+        PnlChart.canvas.style.height = rect.height + 'px';
+        PnlChart.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        PnlChart.draw();
+    },
+
+    setData(points) {
+        PnlChart.data = points;
+        PnlChart.draw();
+    },
+
+    draw() {
+        const ctx = PnlChart.ctx;
+        const canvas = PnlChart.canvas;
+        if (!ctx || !canvas || PnlChart.data.length < 2) return;
+
+        const dpr = window.devicePixelRatio || 1;
+        const w = canvas.width / dpr;
+        const h = canvas.height / dpr;
+        const pad = { top: 30, right: 70, bottom: 40, left: 20 };
+        const plotW = w - pad.left - pad.right;
+        const plotH = h - pad.top - pad.bottom;
+
+        ctx.clearRect(0, 0, w, h);
+
+        const values = PnlChart.data.map(p => p.pnl);
+        const maxV = Math.max(...values, 0) * 1.1 || 10;
+        const minV = Math.min(...values, 0) * 1.1 || -10;
+        const range = maxV - minV || 1;
+
+        const toX = i => pad.left + (i / (PnlChart.data.length - 1)) * plotW;
+        const toY = v => pad.top + plotH - ((v - minV) / range) * plotH;
+
+        /* Grid */
+        ctx.strokeStyle = '#1a1a2e';
+        ctx.lineWidth = 1;
+        for (let i = 0; i <= 6; i++) {
+            const y = pad.top + (i / 6) * plotH;
+            ctx.beginPath();
+            ctx.moveTo(pad.left, y);
+            ctx.lineTo(w - pad.right, y);
+            ctx.stroke();
+            const val = maxV - (i / 6) * range;
+            ctx.fillStyle = '#555568';
+            ctx.font = '11px JetBrains Mono, monospace';
+            ctx.textAlign = 'left';
+            ctx.fillText((val >= 0 ? '+' : '') + 'A$' + val.toFixed(0), w - pad.right + 6, y + 4);
+        }
+
+        /* Zero line */
+        const zeroY = toY(0);
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = '#555568';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(pad.left, zeroY);
+        ctx.lineTo(w - pad.right, zeroY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        /* Time labels */
+        ctx.fillStyle = '#555568';
+        ctx.font = '11px JetBrains Mono, monospace';
+        ctx.textAlign = 'center';
+        const firstTs = PnlChart.data[0].timestamp;
+        const lastTs = PnlChart.data[PnlChart.data.length - 1].timestamp;
+        const spanHours = (lastTs - firstTs) / (3600 * 1000);
+        for (let i = 0; i <= 6; i++) {
+            const idx = Math.floor((i / 6) * (PnlChart.data.length - 1));
+            const x = toX(idx);
+            const d = new Date(PnlChart.data[idx].timestamp);
+            let label;
+            if (spanHours > 24) {
+                label = d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) + ' ' +
+                        d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' });
+            } else {
+                label = d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' });
+            }
+            ctx.fillText(label, x, h - 12);
+        }
+
+        /* Area fill — green above zero, red below */
+        const lastPnl = values[values.length - 1];
+        const isUp = lastPnl >= 0;
+        const gradient = ctx.createLinearGradient(0, pad.top, 0, pad.top + plotH);
+        if (isUp) {
+            gradient.addColorStop(0, 'rgba(0, 230, 118, 0.2)');
+            gradient.addColorStop(1, 'rgba(0, 230, 118, 0.0)');
+        } else {
+            gradient.addColorStop(0, 'rgba(255, 71, 87, 0.0)');
+            gradient.addColorStop(1, 'rgba(255, 71, 87, 0.2)');
+        }
+
+        ctx.beginPath();
+        ctx.moveTo(toX(0), zeroY);
+        for (let i = 0; i < values.length; i++) ctx.lineTo(toX(i), toY(values[i]));
+        ctx.lineTo(toX(values.length - 1), zeroY);
+        ctx.closePath();
+        ctx.fillStyle = gradient;
+        ctx.fill();
+
+        /* P&L line */
+        ctx.beginPath();
+        ctx.moveTo(toX(0), toY(values[0]));
+        for (let i = 1; i < values.length; i++) ctx.lineTo(toX(i), toY(values[i]));
+        ctx.strokeStyle = isUp ? '#00e676' : '#ff4757';
+        ctx.lineWidth = 2.5;
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+
+        /* Current P&L dot */
+        const lastIdx = values.length - 1;
+        ctx.beginPath();
+        ctx.arc(toX(lastIdx), toY(values[lastIdx]), 5, 0, Math.PI * 2);
+        ctx.fillStyle = isUp ? '#00e676' : '#ff4757';
+        ctx.fill();
+        ctx.strokeStyle = '#06060b';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        /* Big P&L text in top-left */
+        ctx.font = 'bold 18px JetBrains Mono, monospace';
+        ctx.fillStyle = isUp ? '#00e676' : '#ff4757';
+        ctx.textAlign = 'left';
+        ctx.fillText((lastPnl >= 0 ? '+' : '') + 'A$' + lastPnl.toFixed(2), pad.left + 8, pad.top + 20);
+    },
+};
+
+
+/* ═══════════════════════════════════════════════════════════════
    WATCH — Cinema-mode animated projection playback
    Enters fullscreen, chart fills the screen, HUD overlay,
    continuous looping for unlimited mode.
@@ -1904,9 +2056,11 @@ async function startWatch() {
     const overlay = document.getElementById('cinema-overlay');
     overlay.classList.remove('hidden');
     CinemaChart.init();
+    PnlChart.init();
 
-    /* Start chart empty — it builds up candle by candle like a live feed */
+    /* Start charts empty — they build up candle by candle like a live feed */
     CinemaChart.setData([]);
+    PnlChart.setData([]);
 
     /* Clear cinema trade log */
     const log = document.getElementById('cinema-trades-log');
@@ -1987,11 +2141,17 @@ function cinemaStep() {
 
     Engine.updatePnl();
 
-    /* Update cinema chart — sliding window of 120 points so the chart
-       scrolls smoothly instead of compressing as data accumulates */
+    /* Update cinema charts — sliding window of 120 points */
     const chartData = CinemaChart.data.concat({ timestamp: candle.timestamp, price: candle.close });
     if (chartData.length > 120) chartData.splice(0, chartData.length - 120);
     CinemaChart.setData(chartData);
+
+    /* Update P&L chart */
+    const totalValue = state.balanceAud + (state.balanceSol * state.bidPrice);
+    const currentPnl = totalValue - state.initialAud;
+    const pnlData = PnlChart.data.concat({ timestamp: candle.timestamp, pnl: currentPnl });
+    if (pnlData.length > 120) pnlData.splice(0, pnlData.length - 120);
+    PnlChart.setData(pnlData);
 
     /* Update cinema HUD */
     const signal = Engine.shouldTrade(state.spreadPct, state.threshold);

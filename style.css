@@ -537,12 +537,36 @@ tbody tr:last-child td { border-bottom: none; }
     flex-direction: column;
     overflow: hidden;
 }
+.cinema-charts {
+    flex: 1;
+    display: flex;
+    gap: 1px;
+    background: var(--border);
+    min-height: 0;
+}
+.cinema-chart-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-primary);
+    min-width: 0;
+}
+.cinema-chart-label {
+    padding: 0.4rem 1rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+}
 .cinema-chart {
     flex: 1;
     position: relative;
     min-height: 0;
 }
-#cinema-canvas {
+#cinema-canvas, #cinema-pnl-canvas {
     width: 100%;
     height: 100%;
     display: block;
