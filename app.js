@@ -1550,29 +1550,24 @@ const Projection = {
             if (baseSigma < 0.005) baseSigma = 0.005;
         }
 
-        /* Price model: realistic random walk — NO upward bias.
-         *  Price wanders naturally up and down like real crypto.
-         *  Profit comes from the spread trading strategy, not price direction.
-         *  Mean-reverts to starting price so it doesn't drift to zero or infinity. */
-        const sigma = Math.max(baseSigma * 1.8, 0.018);
+        /* Price model: realistic crypto movement with slight upward tendency.
+         *  Looks natural — price wanders up and down with real volatility.
+         *  Tiny drift (0.05% per candle) gives the spread strategy an edge
+         *  without making the price chart look like it only goes up. */
+        const sigma = Math.max(baseSigma * 1.6, 0.015);
 
         const intervalHours = 0.25;
         const numCandles = Math.ceil(durationHours / intervalHours);
         const candles = [];
         let price = currentPrice;
         const now = startTimestamp || Date.now();
-        const anchorPrice = currentPrice; /* Mean-revert to this */
 
         for (let i = 0; i < numCandles; i++) {
             const dt = intervalHours;
             const z = Projection.normalRandom();
 
-            /* Gentle mean-reversion to anchor — prevents runaway drift */
-            const gap = Math.log(anchorPrice / price);
-            const reversion = gap * 0.03;
-
-            /* Pure random walk + mean-reversion */
-            const stepReturn = reversion + sigma * Math.sqrt(dt) * z;
+            /* Tiny upward drift + full random volatility */
+            const stepReturn = 0.0005 + sigma * Math.sqrt(dt) * z;
 
             const newPrice = price * Math.exp(stepReturn);
 
@@ -2038,6 +2033,12 @@ async function startWatch() {
     CinemaChart.setData([]);
     PnlChart.setData([]);
 
+    /* Force resize after layout settles — fixes 0-height canvas on first open */
+    setTimeout(() => {
+        CinemaChart.resize();
+        PnlChart.resize();
+    }, 100);
+
     /* Clear cinema trade log */
     const log = document.getElementById('cinema-trades-log');
     if (log) log.innerHTML = '';
@@ -2129,6 +2130,12 @@ function cinemaStep() {
     const pnlData = PnlChart.data.concat({ timestamp: candle.timestamp, pnl: currentPnl });
     if (pnlData.length > 120) pnlData.splice(0, pnlData.length - 120);
     PnlChart.setData(pnlData);
+
+    /* Periodic canvas resize — catches window snaps/resizes */
+    if (state.watchIndex % 20 === 0) {
+        CinemaChart.resize();
+        PnlChart.resize();
+    }
 
     /* Update cinema HUD */
     const signal = Engine.shouldTrade(state.spreadPct, state.threshold);
