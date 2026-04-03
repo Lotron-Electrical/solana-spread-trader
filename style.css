@@ -552,12 +552,11 @@ tbody tr:last-child td { border-bottom: none; }
     min-width: 0;
 }
 .cinema-chart-label {
-    padding: 0.4rem 1rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    padding: 0.6rem 1.2rem;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border);
 }
