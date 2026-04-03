@@ -2021,6 +2021,7 @@ async function startWatch() {
     state._rollingHigh = 0;
     state._rollingLow = 0;
     state._realizedPnl = 0;
+    state._pnlHistory = [];
 
     /* Pause live price feed */
     if (state.priceInterval) { clearInterval(state.priceInterval); state.priceInterval = null; }
@@ -2097,14 +2098,14 @@ function cinemaStep() {
      * Shows wins AND losses honestly — net positive over time. */
     if (!state._maWindow) state._maWindow = [];
     state._maWindow.push(candle.close);
-    if (state._maWindow.length > 8) state._maWindow.shift();
+    if (state._maWindow.length > 5) state._maWindow.shift();
     const ma = state._maWindow.reduce((a, b) => a + b, 0) / state._maWindow.length;
 
     const priceBelowMA = candle.close < ma * 0.998;  /* 0.2% below MA → buy */
     const priceAboveMA = candle.close > ma * 1.002;   /* 0.2% above MA → sell */
 
     if (priceBelowMA && state.balanceSol === 0 && state.balanceAud > 0) {
-        const amount = state.balanceAud * 0.5;
+        const amount = state.balanceAud * 0.7;
         const trade = Engine.executeBuy(amount, ask);
         if (trade) {
             trade.timestamp = candle.timestamp;
@@ -2182,17 +2183,24 @@ function updateCinemaHUD(signal, timestamp) {
         pnlLabel.textContent = (rPnl >= 0 ? '+' : '') + UI.formatAud(rPnl);
         pnlLabel.style.color = rPnl >= 0 ? '#00e676' : '#ff4757';
     }
-    /* Profit rates: per hr / day / week / month */
+    /* Profit rates based on P&L per day (last 96 candles = 24hrs).
+     * Derive hr/wk/mo from the daily rate. */
+    if (!state._pnlHistory) state._pnlHistory = [];
+    state._pnlHistory.push(rPnl);
     const ratesEl = $('cinema-pnl-rates');
-    if (ratesEl && state.watchIndex > 4) {
-        const elapsedHours = (state.watchIndex * 0.25) || 1;
-        const perHr = rPnl / elapsedHours;
-        const perDay = perHr * 24;
+    if (ratesEl && state._pnlHistory.length > 4) {
+        const lookback = Math.min(state._pnlHistory.length, 96); /* 96 candles = 24hrs */
+        const pnlNow = state._pnlHistory[state._pnlHistory.length - 1];
+        const pnlThen = state._pnlHistory[state._pnlHistory.length - lookback];
+        const pnlOverPeriod = pnlNow - pnlThen;
+        const hoursInPeriod = lookback * 0.25;
+        const perDay = pnlOverPeriod * (24 / hoursInPeriod);
+        const perHr = perDay / 24;
         const perWeek = perDay * 7;
         const perMonth = perDay * 30;
         const fmt = v => (v >= 0 ? '+' : '') + 'A$' + v.toFixed(2);
         ratesEl.textContent = `${fmt(perHr)}/hr  ${fmt(perDay)}/day  ${fmt(perWeek)}/wk  ${fmt(perMonth)}/mo`;
-        ratesEl.style.color = perHr >= 0 ? '#00d4aa' : '#ff4757';
+        ratesEl.style.color = perDay >= 0 ? '#00d4aa' : '#ff4757';
     }
 
     const tr = $('cinema-trades');
