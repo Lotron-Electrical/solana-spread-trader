@@ -1905,9 +1905,8 @@ async function startWatch() {
     overlay.classList.remove('hidden');
     CinemaChart.init();
 
-    /* Seed chart with recent data */
-    const seed = recentData.slice(-30).map(p => ({ timestamp: p.timestamp, price: p.price }));
-    CinemaChart.setData(seed);
+    /* Start chart empty — it builds up candle by candle like a live feed */
+    CinemaChart.setData([]);
 
     /* Clear cinema trade log */
     const log = document.getElementById('cinema-trades-log');
@@ -1995,6 +1994,7 @@ function cinemaStep() {
     CinemaChart.setData(chartData);
 
     /* Update cinema HUD */
+    const signal = Engine.shouldTrade(state.spreadPct, state.threshold);
     updateCinemaHUD(signal, candle.timestamp);
 
     state.watchIndex++;
